@@ -1,0 +1,12 @@
+{
+  "name": "trajeto",
+  "private": true,
+  "workspaces": ["packages/*", "apps/*"],
+  "scripts": {
+    "test": "npm run test -w @trajeto/core",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "api": "npm run dev -w @trajeto/api",
+    "web": "npm run web -w @trajeto/mobile",
+    "seed": "npm run seed -w @trajeto/api"
+  }
+}

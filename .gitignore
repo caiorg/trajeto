@@ -1,0 +1,14 @@
+node_modules/
+.expo/
+dist/
+web-build/
+ios/
+android/
+*.db
+*.db-wal
+*.db-shm
+.env
+.env.local
+.DS_Store
+*.tsbuildinfo
+expo-env.d.ts
