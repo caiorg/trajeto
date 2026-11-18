@@ -12,7 +12,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^1.10.0",
     "@fastify/cors": "^11.0.0",
-    "@trajeto/core": "*",
+    "@trajeto/core": "workspace:*",
     "fastify": "^5.6.0",
     "openai": "^7.0.0",
     "zod": "^4.1.12"

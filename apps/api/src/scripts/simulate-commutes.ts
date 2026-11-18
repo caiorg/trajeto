@@ -2,7 +2,7 @@
  * Gera histórico sintético de trajetos casa↔trabalho para demonstrar e validar o aprendizado.
  * Usa os mesmos serviços da API (plano → viagem → amostras GPS → fim), com o relógio no passado.
  *
- *   npm run seed -- --user <uuid> [--days 20] [--home lat,lon] [--work lat,lon]
+ *   bun run seed --user <uuid> [--days 20] [--home lat,lon] [--work lat,lon]
  */
 import { parseArgs } from 'node:util';
 import { localTime, simulateDrive, type PlanResponse } from '@trajeto/core';
