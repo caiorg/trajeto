@@ -1,4 +1,4 @@
-import type { NavFix } from '@trajeto/core';
+import type { NavFix } from '@wayboo/core';
 import * as Location from 'expo-location';
 import { create } from 'zustand';
 

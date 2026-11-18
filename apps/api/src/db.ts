@@ -11,7 +11,7 @@ import {
   type Routine,
   type StatsMap,
   type TraceSample,
-} from '@trajeto/core';
+} from '@wayboo/core';
 import { config } from './config';
 
 /** Usuário agregado (crowd): estatísticas de todos, sem identificar ninguém. */

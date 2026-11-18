@@ -7,7 +7,7 @@ import {
   type Intent,
   type PlanResponse,
   type StopCategory,
-} from '@trajeto/core';
+} from '@wayboo/core';
 import { z } from 'zod';
 import { tryLlm } from './providers';
 

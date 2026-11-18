@@ -16,7 +16,7 @@ import {
   type LatLon,
   type StopSuggestion,
   type Suggestion,
-} from '@trajeto/core';
+} from '@wayboo/core';
 import { parseIntent } from '../ai/planner';
 import { db, getPlaces, getPrefs, getRoutines, statsByPrefix } from '../db';
 import { geocode, STOP_QUERY, type BBox } from '../providers/geo-services';

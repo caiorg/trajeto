@@ -3,15 +3,15 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "trajeto",
+      "name": "wayboo",
     },
     "apps/api": {
-      "name": "@trajeto/api",
+      "name": "@wayboo/api",
       "version": "0.1.0",
       "dependencies": {
         "@anthropic-ai/sdk": "^1.10.0",
         "@fastify/cors": "^11.0.0",
-        "@trajeto/core": "workspace:*",
+        "@wayboo/core": "workspace:*",
         "fastify": "^5.6.0",
         "openai": "^7.0.0",
         "zod": "^4.1.12",
@@ -23,14 +23,14 @@
       },
     },
     "apps/mobile": {
-      "name": "@trajeto/mobile",
+      "name": "@wayboo/mobile",
       "version": "1.0.0",
       "dependencies": {
         "@expo/vector-icons": "^15.0.2",
         "@maplibre/maplibre-react-native": "^11.5.1",
         "@react-native-async-storage/async-storage": "2.2.0",
-        "@trajeto/core": "workspace:*",
         "@types/geojson": "^7946.0.16",
+        "@wayboo/core": "workspace:*",
         "expo": "~58.0.26",
         "expo-constants": "~58.0.16",
         "expo-crypto": "~58.0.8",
@@ -55,7 +55,7 @@
       },
     },
     "packages/core": {
-      "name": "@trajeto/core",
+      "name": "@wayboo/core",
       "version": "0.1.0",
       "dependencies": {
         "zod": "^4.1.12",
@@ -531,12 +531,6 @@
 
     "@standard-schema/spec": ["@standard-schema/spec@1.1.0", "", {}, "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w=="],
 
-    "@trajeto/api": ["@trajeto/api@workspace:apps/api"],
-
-    "@trajeto/core": ["@trajeto/core@workspace:packages/core"],
-
-    "@trajeto/mobile": ["@trajeto/mobile@workspace:apps/mobile"],
-
     "@turf/distance": ["@turf/distance@7.4.0", "", { "dependencies": { "@turf/helpers": "7.4.0", "@turf/invariant": "7.4.0", "@types/geojson": "^7946.0.10", "tslib": "^2.8.1" } }, "sha512-ODkopQDG1m/U6Mx7OMmShncaCvneomwX3lZY1CDA7x40bhDdTTRYP/n/6LicZVyIO4/oK+aXkov4NOtWYthA2g=="],
 
     "@turf/helpers": ["@turf/helpers@7.4.0", "", { "dependencies": { "@types/geojson": "^7946.0.10", "tslib": "^2.8.1" } }, "sha512-7PAwLZqOdRzTI5g9bHvUwlloAXPDH/mlajtryk0tw4ZwGMtmXsAyF4QundsAMfy4u48Fyd3AUqMXY0SMxqJGWg=="],
@@ -590,6 +584,12 @@
     "@vitest/spy": ["@vitest/spy@4.1.12", "", {}, "sha512-RGq9x4JNGNTZHEJxvN0oSiJjeSCExm0n2gZKKJZHY9cX5AVA6M7VJILBT3ZJ/tJ/0J9uWT7fETV9/btoi//vSg=="],
 
     "@vitest/utils": ["@vitest/utils@4.1.12", "", { "dependencies": { "@vitest/pretty-format": "4.1.12", "convert-source-map": "^2.0.0", "tinyrainbow": "^3.1.0" } }, "sha512-Q3awXrwOfEV+qc3WmO5ONyE0yO7Q1gQ9/oyHxGLZ/pl7N3NO/ZztqQwKLuwMkV+CA1JYSIeO3gkHnRDIo4AVaA=="],
+
+    "@wayboo/api": ["@wayboo/api@workspace:apps/api"],
+
+    "@wayboo/core": ["@wayboo/core@workspace:packages/core"],
+
+    "@wayboo/mobile": ["@wayboo/mobile@workspace:apps/mobile"],
 
     "@xmldom/xmldom": ["@xmldom/xmldom@0.8.15", "", {}, "sha512-/5NV/vDALVFDXgLmfsy9TRCBlKwO2LNBFzpzvb9iIj+jR+eSc6DLYYvVOdivT/jm7MtU6TebYuRmzEOI7w40UA=="],
 
@@ -1407,7 +1407,7 @@
 
     "@react-native/community-cli-plugin/commander": ["commander@12.1.0", "", {}, "sha512-Vw8qHK3bZM9y/P10u3Vib8o/DdkvA2OtPtZvD871QKjy74Wj1WSKFILMPRPSdUSx5RFK1arlJzEtA4PkFgnbuA=="],
 
-    "@trajeto/mobile/typescript": ["typescript@6.0.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw=="],
+    "@wayboo/mobile/typescript": ["typescript@6.0.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw=="],
 
     "ajv/fast-uri": ["fast-uri@3.1.9", "", {}, "sha512-hS/0Wt3Ya043oKXs0sIxrMpKQITXhMLIrVAKKXi4gozGC9v7YRWVnXIZzjNPTO02M9BdxLCWqK1yRXgNziVyJQ=="],
 

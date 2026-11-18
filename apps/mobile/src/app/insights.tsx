@@ -1,4 +1,4 @@
-import type { Insights, KnownPlace } from '@trajeto/core';
+import type { Insights, KnownPlace } from '@wayboo/core';
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';

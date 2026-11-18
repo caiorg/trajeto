@@ -15,7 +15,7 @@ import {
   type Place,
   type TraceSample,
   type TripContext,
-} from '@trajeto/core';
+} from '@wayboo/core';
 import {
   CROWD,
   db,

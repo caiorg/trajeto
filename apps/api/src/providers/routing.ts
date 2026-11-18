@@ -8,7 +8,7 @@ import {
   type Maneuver,
   type Route,
   type RouteOptions,
-} from '@trajeto/core';
+} from '@wayboo/core';
 import { config } from '../config';
 import { fetchJson, HttpError } from './http';
 

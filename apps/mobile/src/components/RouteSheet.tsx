@@ -1,4 +1,4 @@
-import { formatDistancePtBR, formatDurationPtBR, routeVia, type Brief, type PlanResponse, type StopSuggestion } from '@trajeto/core';
+import { formatDistancePtBR, formatDurationPtBR, routeVia, type Brief, type PlanResponse, type StopSuggestion } from '@wayboo/core';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useTheme } from '@/lib/theme';
 import { Button, Card, Chip, Icon, T } from './ui';

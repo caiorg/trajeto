@@ -1,4 +1,4 @@
-import { geohash, type StopCategory, type WeatherNow } from '@trajeto/core';
+import { geohash, type StopCategory, type WeatherNow } from '@wayboo/core';
 import { config } from '../config';
 import { fetchJson, ttlCache } from './http';
 
