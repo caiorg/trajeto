@@ -80,7 +80,7 @@ export default function SettingsScreen() {
           Seu histórico de aprendizado fica associado a este id no servidor. Para ver o aprendizado sem dirigir, gere viagens de demonstração:
         </T>
         <T variant="caption" style={{ fontFamily: 'monospace' }} color={t.learn}>
-          npm run seed -- --user {s.userId}
+          bun run seed --user {s.userId}
         </T>
       </Card>
 
