@@ -1,0 +1,28 @@
+# Configuração do CodeRabbit (referência: https://docs.coderabbit.ai/reference/configuration)
+language: "pt-BR"
+reviews:
+  profile: "chill"
+  high_level_summary: true
+  auto_review:
+    enabled: true
+    drafts: false
+  path_filters:
+    - "!**/package-lock.json"
+    - "!**/dist/**"
+    - "!apps/mobile/assets/**"
+  path_instructions:
+    - path: "packages/core/src/learning/**"
+      instructions: |
+        Motor de aprendizado do ETA. Verifique corretude estatística (decaimento, encolhimento,
+        variância), estabilidade numérica e se mudanças vêm com teste em packages/core/test.
+    - path: "apps/api/src/**"
+      instructions: |
+        Privacidade é requisito: compartilhamento de dados só com opt-in explícito e apenas o mínimo
+        necessário. Aponte coleta, log ou retenção de dados de localização além do necessário,
+        chaves de API em logs ou respostas e entradas sem validação zod.
+    - path: "apps/mobile/src/**"
+      instructions: |
+        App Expo (web, Android, iOS). Verifique compatibilidade entre plataformas (.web.tsx vs nativo),
+        acessibilidade (accessibilityLabel/Role) e textos de interface em pt-BR.
+chat:
+  auto_reply: true
