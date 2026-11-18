@@ -17,6 +17,25 @@ function defaultApiUrl(): string {
   return 'http://localhost:8787';
 }
 
+/** Chave usada antes da renomeação para Wayboo. É lida uma vez para manter o `userId` e as preferências. */
+const LEGACY_SETTINGS_KEY = 'trajeto-settings';
+
+/** AsyncStorage que, sem valor na chave nova, move o da chave antiga para ela. */
+const settingsStorage = createJSONStorage(() => ({
+  getItem: async (name: string) => {
+    const value = await AsyncStorage.getItem(name);
+    if (value !== null) return value;
+    const legacy = await AsyncStorage.getItem(LEGACY_SETTINGS_KEY);
+    if (legacy !== null) {
+      await AsyncStorage.setItem(name, legacy);
+      await AsyncStorage.removeItem(LEGACY_SETTINGS_KEY);
+    }
+    return legacy;
+  },
+  setItem: (name: string, value: string) => AsyncStorage.setItem(name, value),
+  removeItem: (name: string) => AsyncStorage.removeItem(name),
+}));
+
 export type ThemePref = 'system' | 'light' | 'dark';
 
 interface Settings {
@@ -40,7 +59,7 @@ export const useSettings = create<Settings>()(
       avoidHighways: false,
       set: (patch) => set(patch),
     }),
-    { name: 'wayboo-settings', storage: createJSONStorage(() => AsyncStorage) },
+    { name: 'wayboo-settings', storage: settingsStorage },
   ),
 );
 
