@@ -1,4 +1,4 @@
-import type { Brief, LatLon, PlanResponse, RoadAlert, StopSuggestion, Suggestion } from '@trajeto/core';
+import type { Brief, LatLon, PlanResponse, RoadAlert, StopSuggestion, Suggestion } from '@wayboo/core';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';

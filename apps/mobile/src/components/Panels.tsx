@@ -1,4 +1,4 @@
-import { ALERT_TYPES, formatDurationPtBR, type AlertType, type FinishTripResponse, type Suggestion } from '@trajeto/core';
+import { ALERT_TYPES, formatDurationPtBR, type AlertType, type FinishTripResponse, type Suggestion } from '@wayboo/core';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { ALERT_COLORS, ALERT_ICONS, ALERT_LABELS, useTheme } from '@/lib/theme';
 import { Button, Card, Icon, T, type IconName } from './ui';

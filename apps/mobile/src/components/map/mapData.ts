@@ -1,4 +1,4 @@
-import type { Coord, LatLon, RoadAlert, SlowSpot } from '@trajeto/core';
+import type { Coord, LatLon, RoadAlert, SlowSpot } from '@wayboo/core';
 import type { FeatureCollection } from 'geojson';
 import { ALERT_COLORS, type Theme } from '@/lib/theme';
 

@@ -40,7 +40,7 @@ export const useSettings = create<Settings>()(
       avoidHighways: false,
       set: (patch) => set(patch),
     }),
-    { name: 'trajeto-settings', storage: createJSONStorage(() => AsyncStorage) },
+    { name: 'wayboo-settings', storage: createJSONStorage(() => AsyncStorage) },
   ),
 );
 

@@ -11,7 +11,7 @@ import {
   StartTripSchema,
   tradeoffs,
   VoteSchema,
-} from '@trajeto/core';
+} from '@wayboo/core';
 import Fastify, { type FastifyRequest } from 'fastify';
 import { z, ZodError } from 'zod';
 import { briefPlan, narrateInsights } from './ai/planner';

@@ -8,7 +8,7 @@ import {
   type PlanResponse,
   type Route,
   type TraceSample,
-} from '@trajeto/core';
+} from '@wayboo/core';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import * as Speech from 'expo-speech';
 import { create } from 'zustand';
@@ -44,7 +44,7 @@ export const useNavSession = create<NavSession>(() => ({
   error: null,
 }));
 
-const KEEP_AWAKE_TAG = 'trajeto-nav';
+const KEEP_AWAKE_TAG = 'wayboo-nav';
 const SIM_SPEEDUP = 6;
 const FLUSH_EVERY_MS = 15_000;
 

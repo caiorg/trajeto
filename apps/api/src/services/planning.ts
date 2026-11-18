@@ -30,7 +30,7 @@ import {
   type StatsMap,
   type TripContext,
   type WeatherNow,
-} from '@trajeto/core';
+} from '@wayboo/core';
 import type { z } from 'zod';
 import { alertsInBox, CROWD, getPlaces, getPrefs, loadStats, savePlan } from '../db';
 import { currentWeather, weatherFlags } from '../providers/geo-services';

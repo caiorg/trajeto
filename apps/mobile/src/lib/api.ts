@@ -9,7 +9,7 @@ import type {
   RoadAlert,
   Suggestion,
   TraceSample,
-} from '@trajeto/core';
+} from '@wayboo/core';
 import { timeZone, useSettings } from './store';
 
 export interface GeocodeResult {

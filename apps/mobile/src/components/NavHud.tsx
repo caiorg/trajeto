@@ -1,4 +1,4 @@
-import { formatDistancePtBR, formatDurationPtBR, maneuverIcon, type ManeuverIcon, type NavState } from '@trajeto/core';
+import { formatDistancePtBR, formatDurationPtBR, maneuverIcon, type ManeuverIcon, type NavState } from '@wayboo/core';
 import { StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '@/lib/theme';

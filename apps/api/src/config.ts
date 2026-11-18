@@ -16,8 +16,8 @@ const provider = detectProvider();
 export const config = {
   port: Number(env.PORT ?? 8787),
   host: env.HOST ?? '0.0.0.0',
-  dbPath: env.DB_PATH ?? 'trajeto.db',
-  userAgent: env.USER_AGENT ?? 'Trajeto/0.1 (+https://github.com/; dev)',
+  dbPath: env.DB_PATH ?? 'wayboo.db',
+  userAgent: env.USER_AGENT ?? 'Wayboo/0.1 (+https://github.com/caiorg/wayboo)',
   valhallaUrl: (env.VALHALLA_URL ?? 'https://valhalla1.openstreetmap.de').replace(/\/$/, ''),
   photonUrl: (env.PHOTON_URL ?? 'https://photon.komoot.io').replace(/\/$/, ''),
   openMeteoUrl: (env.OPEN_METEO_URL ?? 'https://api.open-meteo.com').replace(/\/$/, ''),

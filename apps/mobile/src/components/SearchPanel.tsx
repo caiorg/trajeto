@@ -1,4 +1,4 @@
-import type { LatLon } from '@trajeto/core';
+import type { LatLon } from '@wayboo/core';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Keyboard, Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { api, type GeocodeResult } from '@/lib/api';

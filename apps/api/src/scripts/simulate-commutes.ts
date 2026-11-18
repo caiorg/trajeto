@@ -5,7 +5,7 @@
  *   bun run seed --user <uuid> [--days 20] [--home lat,lon] [--work lat,lon]
  */
 import { parseArgs } from 'node:util';
-import { localTime, simulateDrive, type PlanResponse } from '@trajeto/core';
+import { localTime, simulateDrive, type PlanResponse } from '@wayboo/core';
 import { db, insertSamples } from '../db';
 import { evaluatePlan, plan } from '../services/planning';
 import { finishTrip, startTrip } from '../services/trips';

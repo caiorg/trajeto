@@ -1,12 +1,12 @@
 {
-  "name": "@trajeto/mobile",
+  "name": "@wayboo/mobile",
   "version": "1.0.0",
   "main": "expo-router/entry",
   "dependencies": {
     "@expo/vector-icons": "^15.0.2",
     "@maplibre/maplibre-react-native": "^11.5.1",
     "@react-native-async-storage/async-storage": "2.2.0",
-    "@trajeto/core": "workspace:*",
+    "@wayboo/core": "workspace:*",
     "@types/geojson": "^7946.0.16",
     "expo": "~58.0.26",
     "expo-constants": "~58.0.16",
