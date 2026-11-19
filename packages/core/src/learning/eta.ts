@@ -247,6 +247,14 @@ export interface LearnResult {
 
 const clampLog = (x: number) => Math.max(-1.2, Math.min(2.5, x));
 
+const DAY_MS = 86_400_000;
+/**
+ * O agregado guarda só o dia (UTC) da última atualização, nunca o horário exato em que alguém passou
+ * pelo trecho. O horário aparece só como faixa de 30 min na chave. Com meia-vida de 45 dias, a perda
+ * de precisão no decaimento é desprezível.
+ */
+export const crowdTime = (t: number) => Math.floor(t / DAY_MS) * DAY_MS;
+
 /** Atualiza as estatísticas com o que foi observado na viagem. Não muta os mapas de entrada. */
 export function learnFromTrip(input: LearnInput): LearnResult {
   const { route, observations, timeZone, ctx } = input;
@@ -274,14 +282,14 @@ export function learnFromTrip(input: LearnInput): LearnResult {
     const lt = localTime(o.enteredAt, timeZone);
     const now = o.enteredAt;
     const weight = Math.min(1, seg.baseDurationS / 20);
-    for (const [get, put] of [
-      [getU, user],
-      [getC, crowd],
+    for (const [get, put, t] of [
+      [getU, user, now],
+      [getC, crowd, crowdTime(now)],
     ] as const) {
       const kb = statKey.segBin(seg.key, lt.dayType, lt.bin);
       const ks = statKey.seg(seg.key);
-      put.set(kb, observe(get(kb), x, now));
-      put.set(ks, observe(get(ks), x, now));
+      put.set(kb, observe(get(kb), x, t));
+      put.set(ks, observe(get(ks), x, t));
     }
     const kg = statKey.global(lt.dayType, lt.bin);
     user.set(kg, observe(getU(kg), x, now, weight));
@@ -301,7 +309,7 @@ export function learnFromTrip(input: LearnInput): LearnResult {
       for (const f of flags) {
         const k = statKey.ctx(f);
         user.set(k, observe(getU(k), residual, now));
-        crowd.set(k, observe(getC(k), residual, now, 0.5));
+        crowd.set(k, observe(getC(k), residual, crowdTime(now), 0.5));
       }
     } else if (input.odKey) {
       user.set(input.odKey, observe(getU(input.odKey), residual, now));

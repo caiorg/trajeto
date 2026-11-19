@@ -6,6 +6,7 @@ import type {
   LatLon,
   PlanRequest,
   PlanResponse,
+  Privacy,
   RoadAlert,
   Suggestion,
   TraceSample,
@@ -29,7 +30,7 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(method: 'GET' | 'POST' | 'PATCH', path: string, body?: unknown, timeoutMs = 25000): Promise<T> {
+async function request<T>(method: 'GET' | 'POST' | 'PUT' | 'PATCH', path: string, body?: unknown, timeoutMs = 25000): Promise<T> {
   const { apiUrl, userId } = useSettings.getState();
   // AbortSignal.timeout não existe em todas as versões do Hermes.
   const ctrl = new AbortController();
@@ -81,6 +82,8 @@ export const api = {
   vote: (id: string, up: boolean) => request<RoadAlert>('POST', `/alerts/${id}/vote`, { up }),
   insights: () => request<Insights>('GET', '/insights'),
   narrative: () => request<{ text: string | null; provider: string }>('POST', '/insights/narrative', {}, 40000),
+  privacy: () => request<Privacy>('GET', '/privacy'),
+  setPrivacy: (p: Privacy) => request<Privacy>('PUT', '/privacy', p),
   updatePlace: (id: string, patch: { kind?: 'home' | 'work' | 'other'; name?: string | null }) =>
     request<unknown>('PATCH', `/places/${id}`, patch),
 };

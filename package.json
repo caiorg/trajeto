@@ -6,7 +6,7 @@
     "apps/*"
   ],
   "scripts": {
-    "test": "bun run --filter @wayboo/core test",
+    "test": "bun run --filter \"*\" test",
     "typecheck": "bun run --filter \"*\" typecheck",
     "api": "bun run --cwd apps/api dev",
     "web": "bun run --cwd apps/mobile web",
