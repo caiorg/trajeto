@@ -1,5 +1,7 @@
 import {
   createNavigator,
+  markVisitedStops,
+  rerouteRequest,
   simulateDrive,
   type FinishTripResponse,
   type NavFix,
@@ -8,6 +10,7 @@ import {
   type PlanResponse,
   type Route,
   type TraceSample,
+  type TripStop,
 } from '@wayboo/core';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import * as Speech from 'expo-speech';
@@ -22,6 +25,8 @@ interface NavSession {
   status: Status;
   plan: PlanResponse | null;
   route: Route | null;
+  /** Paradas do plano original; as visitadas não voltam nos recálculos. */
+  stops: TripStop[];
   nav: NavState | null;
   tripId: string | null;
   simulated: boolean;
@@ -35,6 +40,7 @@ export const useNavSession = create<NavSession>(() => ({
   status: 'idle',
   plan: null,
   route: null,
+  stops: [],
   nav: null,
   tripId: null,
   simulated: false,
@@ -96,13 +102,7 @@ async function reroute(fix: NavFix) {
   speak('Recalculando rota');
   try {
     const { avoidTolls, avoidHighways } = useSettings.getState();
-    const next = await api.plan({
-      origin: { lat: fix.lat, lon: fix.lon },
-      destination: s.plan.destination,
-      destinationName: s.plan.destinationName ?? undefined,
-      options: { avoidTolls, avoidHighways, avoidFerries: false },
-      reroute: true,
-    });
+    const next = await api.plan(rerouteRequest(s.plan, fix, s.stops, { avoidTolls, avoidHighways, avoidFerries: false }));
     const chosen = next.routes[next.recommendedIndex]!;
     navigator = createNavigator(chosen.route, { segmentDurationsS: chosen.eta.segmentDurationsS });
     if (s.tripId) await api.reroute(s.tripId, next.planId, next.recommendedIndex);
@@ -116,7 +116,8 @@ function onFix(fix: NavFix) {
   if (!navigator || finishing) return;
   const st = navigator.update(fix);
   const s = useNavSession.getState();
-  useNavSession.setState({ nav: st });
+  const stops = markVisitedStops(s.stops, fix);
+  useNavSession.setState(stops === s.stops ? { nav: st } : { nav: st, stops });
   if (st.announcement) speak(st.announcement);
   if (!s.simulated) buffer.push({ t: fix.t, lat: fix.lat, lon: fix.lon, speed: fix.speed ?? null, heading: fix.heading ?? null, accuracy: fix.accuracy ?? null });
   if (st.arrived) {
@@ -137,6 +138,7 @@ export async function startNavigation(plan: PlanResponse, routeIndex: number, si
     status: 'navigating',
     plan,
     route: chosen.route,
+    stops: plan.waypoints.map((w) => ({ lat: w.lat, lon: w.lon, visited: false })),
     nav: null,
     tripId: null,
     simulated: simulate,
@@ -201,5 +203,5 @@ export function toggleMute() {
 }
 
 export function dismissSession() {
-  useNavSession.setState({ status: 'idle', plan: null, route: null, nav: null, tripId: null, result: null, error: null });
+  useNavSession.setState({ status: 'idle', plan: null, route: null, stops: [], nav: null, tripId: null, result: null, error: null });
 }

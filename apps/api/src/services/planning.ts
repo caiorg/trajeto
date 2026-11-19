@@ -249,6 +249,7 @@ export function evaluatePlan(
     origin: req.origin,
     destination: req.destination,
     destinationName: req.destinationName ?? null,
+    waypoints: req.waypoints,
     originPlace: knownPlace(originPlace),
     destinationPlace: knownPlace(destinationPlace),
     routes: planned,
