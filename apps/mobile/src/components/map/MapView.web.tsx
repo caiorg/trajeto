@@ -1,7 +1,11 @@
-import { Map as MlMap, type GeoJSONSource, type LayerSpecification, type MapMouseEvent } from 'maplibre-gl';
+import { Map as MlMap, setWorkerUrl, type GeoJSONSource, type LayerSpecification, type MapMouseEvent } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { useEffect, useRef } from 'react';
 import { buildSources, layerSpecs, SOURCE, type MapViewProps } from './mapData';
+
+// O Metro não resolve o worker que o maplibre-gl 6 carrega via import.meta.url.
+// O postinstall copia o arquivo para public/, que o Expo serve na raiz.
+setWorkerUrl('/maplibre-gl-worker.mjs');
 
 /** Implementação web com maplibre-gl. Mesmas camadas e fontes da versão nativa. */
 export function MapView({ theme, data, camera, initialCenter, onLongPress, onUserPan }: MapViewProps) {
