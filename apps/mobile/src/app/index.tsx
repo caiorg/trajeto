@@ -230,7 +230,7 @@ export default function MapScreen() {
         alerts: [...alertMap.values()],
         slowSpots: session.plan?.routes.find((r) => r.route.id === session.route?.id)?.slowSpots ?? [],
         destination: session.plan?.destination ?? null,
-        stops,
+        stops: session.stops.filter((x) => !x.visited),
         puck: session.nav ? { lat: session.nav.snapped[1], lon: session.nav.snapped[0], heading: lastHeading.current } : null,
       };
     }
@@ -243,7 +243,7 @@ export default function MapScreen() {
       stops,
       puck: here ? { ...here, heading: fix?.heading ?? null } : null,
     };
-  }, [navigating, session.route, session.plan, session.nav, plan, selected, stops, nearbyAlerts, here?.lat, here?.lon]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [navigating, session.route, session.plan, session.stops, session.nav, plan, selected, stops, nearbyAlerts, here?.lat, here?.lon]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const panelStyle = wide ? [styles.sidePanel, { top: insets.top + 84 }] : [styles.bottomPanel, { paddingBottom: insets.bottom + 10 }];
 

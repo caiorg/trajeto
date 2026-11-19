@@ -81,6 +81,8 @@ export interface PlanResponse {
   origin: LatLon;
   destination: LatLon;
   destinationName: string | null;
+  /** Paradas intermediárias, na ordem pedida. */
+  waypoints: LatLon[];
   originPlace: KnownPlace | null;
   destinationPlace: KnownPlace | null;
   routes: PlannedRoute[];

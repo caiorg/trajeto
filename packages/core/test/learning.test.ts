@@ -11,12 +11,14 @@ import {
   inferKinds,
   learnFromTrip,
   localTime,
+  markVisitedStops,
   matchPlace,
   predictEta,
   predictTrips,
   PRIOR_WEIGHTS,
   recordArrival,
   recordRoutine,
+  rerouteRequest,
   routeFeatures,
   simulateDrive,
   tradeoffs,
@@ -27,6 +29,7 @@ import {
   type Route,
   type StatsMap,
   type TripContext,
+  type TripStop,
 } from '../src';
 
 const TZ = 'America/Sao_Paulo';
@@ -268,6 +271,33 @@ describe('navegação', () => {
     let s;
     for (let i = 0; i < 3; i++) s = nav2.update({ t: 2 + i, lat: HOME[1] + 0.003, lon: HOME[0] - 0.003, accuracy: 5 });
     expect(s!.offRoute).toBe(true);
+  });
+
+  it('recálculo mantém paradas pendentes e descarta as visitadas', () => {
+    const plan = { destination: { lat: WORK[1], lon: WORK[0] }, destinationName: 'Trabalho' };
+    const opts = { avoidTolls: false, avoidHighways: false, avoidFerries: false };
+    const posto = { lat: -23.58, lon: -46.64 };
+    const farmacia = { lat: -23.59, lon: -46.63 };
+    let stops: TripStop[] = [posto, farmacia].map((p) => ({ ...p, visited: false }));
+
+    // Longe das paradas: nada muda e o recálculo ainda passa pelas duas.
+    const far = { lat: HOME[1], lon: HOME[0] };
+    expect(markVisitedStops(stops, far)).toBe(stops);
+    const before = rerouteRequest(plan, far, stops, opts);
+    expect(before.origin).toEqual(far);
+    expect(before.destination).toEqual(plan.destination);
+    expect(before.reroute).toBe(true);
+    expect(before.waypoints).toEqual([posto, farmacia]);
+
+    // ~30 m do posto marca como visitado; ~80 m da farmácia ainda não.
+    stops = markVisitedStops(stops, { lat: posto.lat + 0.00027, lon: posto.lon });
+    stops = markVisitedStops(stops, { lat: farmacia.lat + 0.00072, lon: farmacia.lon });
+    expect(stops.map((x) => x.visited)).toEqual([true, false]);
+    expect(rerouteRequest(plan, far, stops, opts).waypoints).toEqual([farmacia]);
+
+    // Parada visitada não volta, mesmo longe dela.
+    stops = markVisitedStops(stops, far);
+    expect(rerouteRequest(plan, far, stops, opts).waypoints).toEqual([farmacia]);
   });
 });
 

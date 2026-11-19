@@ -1,6 +1,7 @@
-import { cumulativeDistances, projectOnPolyline, type Coord } from './geo';
+import type { PlanRequest, PlanResponse } from './api';
+import { cumulativeDistances, haversine, projectOnPolyline, type Coord } from './geo';
 import { spokenInstruction } from './instructions';
-import type { Maneuver, Route } from './types';
+import type { LatLon, Maneuver, Route, RouteOptions } from './types';
 
 export interface NavFix {
   t: number;
@@ -148,3 +149,42 @@ export function createNavigator(route: Route, opts: NavigatorOptions = {}) {
 }
 
 export type Navigator = ReturnType<typeof createNavigator>;
+
+/** Parada intermediária da viagem (ex.: posto pedido ao copiloto). */
+export interface TripStop extends LatLon {
+  visited: boolean;
+}
+
+/** Pedido de replanejamento a partir da posição atual, mantendo destino e paradas pendentes. */
+export function rerouteRequest(
+  plan: Pick<PlanResponse, 'destination' | 'destinationName'>,
+  fix: Pick<NavFix, 'lat' | 'lon'>,
+  stops: TripStop[],
+  options: RouteOptions,
+): Omit<PlanRequest, 'timeZone'> {
+  return {
+    origin: { lat: fix.lat, lon: fix.lon },
+    destination: plan.destination,
+    destinationName: plan.destinationName ?? undefined,
+    waypoints: stops.filter((s) => !s.visited).map(({ lat, lon }) => ({ lat, lon })),
+    options,
+    reroute: true,
+  };
+}
+
+export const STOP_VISITED_RADIUS_M = 50;
+
+/** Marca como visitadas as paradas a menos de `radiusM` da posição. Devolve o mesmo array se nada mudou. */
+export function markVisitedStops(
+  stops: TripStop[],
+  fix: Pick<NavFix, 'lat' | 'lon'>,
+  radiusM = STOP_VISITED_RADIUS_M,
+): TripStop[] {
+  let changed = false;
+  const next = stops.map((s) => {
+    if (s.visited || haversine([s.lon, s.lat], [fix.lon, fix.lat]) > radiusM) return s;
+    changed = true;
+    return { ...s, visited: true };
+  });
+  return changed ? next : stops;
+}
