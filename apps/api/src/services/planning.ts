@@ -32,8 +32,9 @@ import {
   type WeatherNow,
 } from '@wayboo/core';
 import type { z } from 'zod';
-import { alertsInBox, CROWD, getPlaces, getPrefs, loadStats, savePlan } from '../db';
+import { alertsInBox, CROWD, deletionTicket, getPlaces, getPrefs, loadStats, savePlan } from '../db';
 import { currentWeather, weatherFlags } from '../providers/geo-services';
+import { HttpError } from '../providers/http';
 import { valhalla } from '../providers/routing';
 
 export type Priority = 'fastest' | 'reliable' | 'familiar' | 'shortest' | null;
@@ -174,20 +175,25 @@ export async function plan(
   req: z.output<typeof PlanRequestSchema>,
   priority: Priority = null,
 ): Promise<PlanResponse> {
+  const ticket = deletionTicket();
   const [routes, weather] = await Promise.all([
     valhalla.route([req.origin, ...req.waypoints, req.destination], req.options, req.reroute ? 1 : 2),
     currentWeather(req.origin.lat, req.origin.lon),
   ]);
-  return evaluatePlan(userId, req, routes, weather, priority);
+  return evaluatePlan(userId, req, routes, weather, priority, ticket);
 }
 
-/** Avalia rotas já obtidas com o que foi aprendido (separado para testes e simulação sem rede). */
+/**
+ * Avalia rotas já obtidas com o que foi aprendido (separado para testes e simulação sem rede).
+ * `ticket` vem de `deletionTicket()` no início do pedido, antes de esperar os provedores.
+ */
 export function evaluatePlan(
   userId: string,
   req: z.output<typeof PlanRequestSchema>,
   routes: Route[],
   weather: WeatherNow | null,
   priority: Priority = null,
+  ticket = deletionTicket(),
 ): PlanResponse {
   const departAt = req.departAt ?? Date.now();
 
@@ -259,6 +265,7 @@ export function evaluatePlan(
     departures,
     learningLevel: conf < 0.05 ? 'nenhum' : conf < 0.3 ? 'inicial' : conf < 0.7 ? 'bom' : 'alto',
   };
-  savePlan(userId, result);
+  // Usuário apagado durante o planejamento. 409, não 401: com 401 o app registraria o aparelho e repetiria o pedido.
+  if (!savePlan(userId, result, ticket)) throw new HttpError(409, 'Dados do usuário apagados durante o planejamento');
   return result;
 }

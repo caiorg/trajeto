@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS trips (
   time_zone TEXT NOT NULL, started_at INTEGER NOT NULL, finished_at INTEGER,
   predicted_s REAL NOT NULL, base_s REAL NOT NULL, actual_s REAL, distance_m REAL NOT NULL,
   origin_place TEXT, dest_place TEXT, ctx TEXT NOT NULL, status TEXT NOT NULL,
-  error_base REAL, error_learned REAL
+  error_base REAL, error_learned REAL, last_sample_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS trips_user ON trips(user_id, started_at);
 CREATE TABLE IF NOT EXISTS trip_legs (
@@ -73,6 +73,11 @@ CREATE TABLE IF NOT EXISTS anomalies (
 CREATE TABLE IF NOT EXISTS devices (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, created_at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS devices_user ON devices(user_id);
 `);
+
+// Bancos criados antes da retenção não têm a coluna; `CREATE TABLE IF NOT EXISTS` não a acrescenta.
+if (!db.prepare("SELECT 1 FROM pragma_table_info('trips') WHERE name = 'last_sample_at'").get()) {
+  db.exec('ALTER TABLE trips ADD COLUMN last_sample_at INTEGER');
+}
 
 type Row = Record<string, string | number | null>;
 
@@ -275,12 +280,31 @@ export function setShareCrowd(userId: string, share: boolean): void {
 
 // ---------- planos ----------
 
-export function savePlan(userId: string, plan: PlanResponse): void {
+/**
+ * Última exclusão de cada usuário, só em memória, com um contador em vez de relógio para não depender
+ * da resolução de `Date.now()`. Basta durar mais que o pedido mais longo; não vai para o disco.
+ */
+const deletions = new Map<string, { seq: number; at: number }>();
+const DELETION_MEMORY_MS = 10 * 60_000;
+let deletionSeq = 0;
+
+/** Marca o início de um pedido que grava depois de esperar; passe o valor para `savePlan`. */
+export const deletionTicket = () => deletionSeq;
+
+/**
+ * Grava o plano, salvo se o usuário foi apagado (`DELETE /me`) depois de `ticket` (de `deletionTicket()`,
+ * pego no início do pedido). O planejamento espera os provedores; sem essa checagem, um pedido em curso
+ * recriaria origem, destino e rota depois da exclusão, mesmo que o aparelho se registre de novo com o mesmo id.
+ * Devolve se gravou.
+ */
+export function savePlan(userId: string, plan: PlanResponse, ticket: number): boolean {
+  if ((deletions.get(userId)?.seq ?? 0) > ticket) return false;
   db.prepare('INSERT INTO plans (id, user_id, created_at, body) VALUES (?, ?, ?, ?)').run(plan.planId, userId, plan.createdAt, JSON.stringify(plan));
   // Planos só servem para iniciar viagens; os de mais de 2 dias sem viagem podem sair.
   db.prepare(
     'DELETE FROM plans WHERE created_at < ? AND id NOT IN (SELECT plan_id FROM trip_legs)',
   ).run(Date.now() - 2 * 86_400_000);
+  return true;
 }
 
 export function getPlan(userId: string, planId: string): PlanResponse | null {
@@ -290,9 +314,11 @@ export function getPlan(userId: string, planId: string): PlanResponse | null {
 
 // ---------- amostras ----------
 
-export function insertSamples(tripId: string, samples: TraceSample[]): void {
+/** Grava as amostras e marca a atividade da viagem com o relógio do servidor (usado na retenção). */
+export function insertSamples(tripId: string, samples: TraceSample[], now = Date.now()): void {
   const stmt = db.prepare('INSERT INTO samples (trip_id, t, lat, lon, speed, heading, accuracy) VALUES (?, ?, ?, ?, ?, ?, ?)');
   for (const s of samples) stmt.run(tripId, s.t, s.lat, s.lon, s.speed ?? null, s.heading ?? null, s.accuracy ?? null);
+  db.prepare('UPDATE trips SET last_sample_at = ? WHERE id = ?').run(now, tripId);
 }
 
 export function getSamples(tripId: string): TraceSample[] {
@@ -304,6 +330,90 @@ export function getSamples(tripId: string): TraceSample[] {
     heading: r.heading === null ? null : Number(r.heading),
     accuracy: r.accuracy === null ? null : Number(r.accuracy),
   }));
+}
+
+// ---------- retenção e dados do usuário (LGPD) ----------
+
+/** Viagem ativa sem encerramento por mais que isso conta como abandonada. */
+const ABANDONED_TRIP_MS = 86_400_000;
+
+/**
+ * Apaga o rastro GPS bruto e os planos (origem, destino e geometria) das viagens encerradas há mais
+ * de `retentionMs`. Depois do encerramento, o aprendizado só usa as estatísticas por trecho, que ficam.
+ * Viagem ativa só perde o rastro depois de abandonada, para o prazo curto não cortar uma viagem em curso.
+ * Alertas expirados há mais de `retentionMs` saem com os votos: guardam coordenada, horário e autor.
+ */
+export function purgeExpiredTraces(retentionMs: number, now = Date.now()): { samples: number; plans: number; alerts: number } {
+  const cutoff = now - retentionMs;
+  const abandonedCutoff = now - Math.max(retentionMs, ABANDONED_TRIP_MS);
+  // Ativa: abandono conta do último envio de amostras pelo relógio do servidor, não da idade da viagem
+  // nem do `t` das amostras, que vem do aparelho e pode estar no futuro.
+  const expired = `SELECT id FROM trips WHERE (status != 'active' AND finished_at < ?)
+    OR (status = 'active' AND COALESCE(last_sample_at, started_at) < ?)`;
+  return transaction(() => {
+    const samples = db.prepare(`DELETE FROM samples WHERE trip_id IN (${expired})`).run(cutoff, abandonedCutoff);
+    const plans = db
+      .prepare(`DELETE FROM plans WHERE created_at < ? AND id NOT IN (SELECT plan_id FROM trip_legs WHERE trip_id NOT IN (${expired}))`)
+      .run(cutoff, cutoff, abandonedCutoff);
+    db.prepare('DELETE FROM alert_votes WHERE alert_id IN (SELECT id FROM alerts WHERE expires_at < ?)').run(cutoff);
+    const alerts = db.prepare('DELETE FROM alerts WHERE expires_at < ?').run(cutoff);
+    return { samples: Number(samples.changes), plans: Number(plans.changes), alerts: Number(alerts.changes) };
+  });
+}
+
+
+const OWN_TRIPS = 'trip_id IN (SELECT id FROM trips WHERE user_id = ?)';
+
+/**
+ * Tudo o que o servidor guarda ligado a um usuário; exportar e apagar usam a mesma lista.
+ * Filhos antes de `trips`, porque o filtro deles depende das viagens. O hash do token do aparelho não é exportado.
+ * O agregado (`CROWD`) não guarda quem contribuiu, então não entra aqui.
+ */
+const USER_TABLES: { table: string; where: string; columns?: string }[] = [
+  { table: 'samples', where: OWN_TRIPS },
+  { table: 'trip_legs', where: OWN_TRIPS },
+  { table: 'trips', where: 'user_id = ?' },
+  { table: 'plans', where: 'user_id = ?' },
+  { table: 'stats', where: 'user_id = ?' },
+  { table: 'anomalies', where: 'user_id = ?' },
+  { table: 'places', where: 'user_id = ?' },
+  { table: 'routines', where: 'user_id = ?' },
+  { table: 'routine_routes', where: 'user_id = ?' },
+  { table: 'prefs', where: 'user_id = ?' },
+  { table: 'privacy', where: 'user_id = ?' },
+  { table: 'alerts', where: 'reporter = ?' },
+  { table: 'alert_votes', where: 'user_id = ?' },
+  { table: 'devices', where: 'user_id = ?', columns: 'created_at' },
+];
+
+export interface UserDataExport {
+  userId: string;
+  exportedAt: string;
+  tables: Record<string, Row[]>;
+}
+
+export function exportUserData(userId: string): UserDataExport {
+  const tables: Record<string, Row[]> = {};
+  for (const t of USER_TABLES) tables[t.table] = db.prepare(`SELECT ${t.columns ?? '*'} FROM ${t.table} WHERE ${t.where}`).all(userId) as Row[];
+  return { userId, exportedAt: new Date().toISOString(), tables };
+}
+
+/**
+ * Apaga todos os dados do usuário, inclusive os aparelhos: o token deixa de valer.
+ * Alertas que ele criou continuam para a comunidade, sem autor; os votos dele saem, e a contagem do alerta fica.
+ */
+export function deleteUserData(userId: string): Record<string, number> {
+  const now = Date.now();
+  for (const [id, d] of deletions) if (d.at < now - DELETION_MEMORY_MS) deletions.delete(id);
+  deletions.set(userId, { seq: ++deletionSeq, at: now });
+  return transaction(() => {
+    const deleted: Record<string, number> = {};
+    for (const t of USER_TABLES) {
+      const sql = t.table === 'alerts' ? `UPDATE alerts SET reporter = '${CROWD}' WHERE ${t.where}` : `DELETE FROM ${t.table} WHERE ${t.where}`;
+      deleted[t.table] = Number(db.prepare(sql).run(userId).changes);
+    }
+    return deleted;
+  });
 }
 
 // ---------- alertas ----------

@@ -36,6 +36,13 @@ function parseEnv<T extends z.ZodType>(schema: T): z.output<T> {
 const aiEnv = parseEnv(AiEnv);
 const suggestionEnv = parseEnv(SuggestionEnv);
 
+/** Vazio conta como ausente (padrão 24); zero explícito vale e apaga na próxima rodada. */
+const RetentionEnv = z.object({
+  GPS_RETENTION_HOURS: optionalText.transform((v) => (v === undefined ? 24 : Number(v))).pipe(z.number().finite().nonnegative()),
+});
+
+const retentionEnv = parseEnv(RetentionEnv);
+
 export type AiProviderName = 'anthropic' | 'openai' | 'ollama' | 'openrouter' | 'none';
 
 const PROVIDERS: readonly AiProviderName[] = ['anthropic', 'openai', 'ollama', 'openrouter', 'none'];
@@ -78,6 +85,8 @@ export const config = {
     /** Distância máxima entre o ponto atual (e o destino) e os pontos usados quando a rota foi guardada. */
     routeRadiusM: suggestionEnv.SUGGESTION_ROUTE_RADIUS_M ?? 250,
   },
+  /** Horas que o rastro GPS de uma viagem encerrada fica no servidor. Ver docs/privacidade.md. */
+  gpsRetentionHours: retentionEnv.GPS_RETENTION_HOURS,
   ai: {
     provider,
     model: aiEnv.AI_MODEL ?? (provider === 'anthropic' ? 'claude-opus-5-5' : null),

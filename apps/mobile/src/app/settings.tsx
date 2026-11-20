@@ -15,6 +15,9 @@ export default function SettingsScreen() {
   // null enquanto carrega ou sem conexão: o opt-in vive no servidor, não no aparelho.
   const [shareCrowd, setShareCrowd] = useState<boolean | null>(null);
   const [privacyError, setPrivacyError] = useState<string | null>(null);
+  // Dois toques: o primeiro arma, o segundo apaga. Alert com botões não funciona na web.
+  const [deleteState, setDeleteState] = useState<'idle' | 'confirm' | 'deleting'>('idle');
+  const [deleteMsg, setDeleteMsg] = useState<string | null>(null);
 
   const loadPrivacy = async () => {
     try {
@@ -38,8 +41,31 @@ export default function SettingsScreen() {
     }
   };
 
+  const deleteMyData = async () => {
+    if (deleteState === 'idle') {
+      setDeleteState('confirm');
+      setDeleteMsg('Toque de novo para apagar. Não dá para desfazer.');
+      return;
+    }
+    setDeleteState('deleting');
+    try {
+      await api.deleteMyData();
+      setDeleteMsg('Dados apagados no servidor.');
+      void loadPrivacy();
+    } catch {
+      setDeleteMsg('Não foi possível apagar. Confira a conexão com o servidor.');
+    }
+    setDeleteState('idle');
+  };
+
   const test = async () => {
-    s.set({ apiUrl: normalizeApiUrl(url) });
+    const nextUrl = normalizeApiUrl(url);
+    // A confirmação vale para o servidor em que foi armada.
+    if (nextUrl !== normalizeApiUrl(s.apiUrl)) {
+      setDeleteState('idle');
+      setDeleteMsg(null);
+    }
+    s.set({ apiUrl: nextUrl });
     setStatus('Testando…');
     try {
       const h = await api.health();
@@ -111,6 +137,17 @@ export default function SettingsScreen() {
           deixam de contribuir. O que já foi somado não guarda quem enviou e continua no total.
         </T>
         {privacyError ? <T variant="caption" color={t.danger}>{privacyError}</T> : null}
+        <T variant="caption">
+          O rastro GPS de cada viagem sai do servidor depois do prazo de retenção (24 horas no padrão); ficam só os tempos aprendidos por trecho, seus lugares e o resumo das viagens.
+        </T>
+        <Button
+          label={deleteState === 'confirm' ? 'Confirmar: apagar meus dados' : 'Apagar meus dados do servidor'}
+          kind="danger"
+          icon="delete-outline"
+          loading={deleteState === 'deleting'}
+          onPress={() => void deleteMyData()}
+        />
+        {deleteMsg ? <T variant="caption">{deleteMsg}</T> : null}
       </Card>
 
       <Card style={{ gap: 10 }}>

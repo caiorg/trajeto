@@ -31,7 +31,7 @@ export class ApiError extends Error {
   }
 }
 
-type Method = 'GET' | 'POST' | 'PUT' | 'PATCH';
+type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 /** `baseUrl` vem de quem chama: o token só vai para o servidor em que foi registrado. */
 async function send<T>(baseUrl: string, method: Method, path: string, body: unknown, timeoutMs: number, token: string | null): Promise<T> {
@@ -148,6 +148,8 @@ export const api = {
   narrative: () => request<{ text: string | null; provider: string }>('POST', '/insights/narrative', {}, 40000),
   privacy: () => request<Privacy>('GET', '/privacy'),
   setPrivacy: (p: Privacy) => request<Privacy>('PUT', '/privacy', p),
+  /** Apaga tudo deste usuário no servidor. O token deixa de valer; a próxima chamada registra o aparelho de novo, sem dados. */
+  deleteMyData: () => request<{ deleted: Record<string, number> }>('DELETE', '/me'),
   updatePlace: (id: string, patch: { kind?: 'home' | 'work' | 'other'; name?: string | null }) =>
     request<unknown>('PATCH', `/places/${id}`, patch),
 };
