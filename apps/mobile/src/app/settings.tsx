@@ -2,13 +2,15 @@ import { useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, Switch, TextInput, View } from 'react-native';
 import { Button, Card, Chip, T } from '@/components/ui';
 import { api } from '@/lib/api';
-import { useSettings, type ThemePref } from '@/lib/store';
+import { normalizeApiUrl, useSettings, type ThemePref } from '@/lib/store';
 import { useTheme } from '@/lib/theme';
 
 export default function SettingsScreen() {
   const t = useTheme();
   const s = useSettings();
   const [url, setUrl] = useState(s.apiUrl);
+  // Id que o servidor atual usa; antes do primeiro registro, o UUID local que ele vai adotar.
+  const userId = s.credentials[normalizeApiUrl(s.apiUrl)]?.userId ?? s.userId;
   const [status, setStatus] = useState<string | null>(null);
   // null enquanto carrega ou sem conexão: o opt-in vive no servidor, não no aparelho.
   const [shareCrowd, setShareCrowd] = useState<boolean | null>(null);
@@ -37,7 +39,7 @@ export default function SettingsScreen() {
   };
 
   const test = async () => {
-    s.set({ apiUrl: url.trim() });
+    s.set({ apiUrl: normalizeApiUrl(url) });
     setStatus('Testando…');
     try {
       const h = await api.health();
@@ -123,13 +125,13 @@ export default function SettingsScreen() {
       <Card style={{ gap: 8 }}>
         <T variant="title">Identificador deste aparelho</T>
         <T variant="caption" style={{ fontFamily: 'monospace' }} color={t.text}>
-          {s.userId}
+          {userId}
         </T>
         <T variant="caption">
           Seu histórico de aprendizado fica associado a este id no servidor. Para ver o aprendizado sem dirigir, gere viagens de demonstração:
         </T>
         <T variant="caption" style={{ fontFamily: 'monospace' }} color={t.learn}>
-          bun run seed --user {s.userId}
+          bun run seed --user {userId}
         </T>
       </Card>
 
