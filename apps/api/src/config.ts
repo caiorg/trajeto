@@ -17,15 +17,24 @@ const AiEnv = z.object({
   OPENROUTER_API_KEY: optionalText,
 });
 
-function parseAiEnv() {
-  const r = AiEnv.safeParse(env);
+/** Número finito e positivo; vazio conta como ausente. */
+const optionalPositive = optionalText.pipe(z.coerce.number<string>().positive().optional());
+
+const SuggestionEnv = z.object({
+  SUGGESTION_ROUTE_MAX_AGE_MIN: optionalPositive,
+  SUGGESTION_ROUTE_RADIUS_M: optionalPositive,
+});
+
+function parseEnv<T extends z.ZodType>(schema: T): z.output<T> {
+  const r = schema.safeParse(env);
   if (r.success) return r.data;
   // Só o nome da variável: a mensagem não pode vazar a chave.
   const names = [...new Set(r.error.issues.map((i) => String(i.path[0])))];
   throw new Error(`Variável de ambiente inválida: ${names.join(', ')}`);
 }
 
-const aiEnv = parseAiEnv();
+const aiEnv = parseEnv(AiEnv);
+const suggestionEnv = parseEnv(SuggestionEnv);
 
 export type AiProviderName = 'anthropic' | 'openai' | 'ollama' | 'openrouter' | 'none';
 
@@ -63,6 +72,12 @@ export const config = {
   photonUrl: (env.PHOTON_URL ?? 'https://photon.komoot.io').replace(/\/$/, ''),
   openMeteoUrl: (env.OPEN_METEO_URL ?? 'https://api.open-meteo.com').replace(/\/$/, ''),
   corsOrigin: env.CORS_ORIGIN ?? true,
+  /** `/suggestions` reaproveita a rota habitual guardada e só pede outra ao roteador quando ela fica velha ou o pedido sai do raio. */
+  suggestions: {
+    routeMaxAgeMs: (suggestionEnv.SUGGESTION_ROUTE_MAX_AGE_MIN ?? 24 * 60) * 60_000,
+    /** Distância máxima entre o ponto atual (e o destino) e os pontos usados quando a rota foi guardada. */
+    routeRadiusM: suggestionEnv.SUGGESTION_ROUTE_RADIUS_M ?? 250,
+  },
   ai: {
     provider,
     model: aiEnv.AI_MODEL ?? (provider === 'anthropic' ? 'claude-opus-5-5' : null),
