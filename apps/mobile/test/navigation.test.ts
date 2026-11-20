@@ -100,6 +100,28 @@ describe('wake lock da navegação', () => {
     expect(deactivate).not.toHaveBeenCalled();
   });
 
+  it('só ativa de novo depois que a desativação anterior termina', async () => {
+    await startNavigation(plan, 0, true);
+    await settle();
+    let resolve!: () => void;
+    const pending = new Promise<void>((r) => {
+      resolve = r;
+    });
+    deactivate.mockImplementationOnce(async (tag?: string) => {
+      await pending;
+      active.delete(tag!);
+    });
+    await stopNavigation();
+    await startNavigation(plan, 0, true);
+    await settle();
+    expect(deactivate).toHaveBeenCalledTimes(1);
+    expect(activate).toHaveBeenCalledTimes(1);
+    resolve();
+    await settle();
+    expect(activate).toHaveBeenCalledTimes(2);
+    expect(active.size).toBe(1);
+  });
+
   it('parar e iniciar várias vezes não gera promise rejeitada', async () => {
     for (let i = 0; i < 5; i++) {
       await startNavigation(plan, 0, i % 2 === 0);
