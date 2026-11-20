@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS trips (
   time_zone TEXT NOT NULL, started_at INTEGER NOT NULL, finished_at INTEGER,
   predicted_s REAL NOT NULL, base_s REAL NOT NULL, actual_s REAL, distance_m REAL NOT NULL,
   origin_place TEXT, dest_place TEXT, ctx TEXT NOT NULL, status TEXT NOT NULL,
-  error_base REAL, error_learned REAL
+  error_base REAL, error_learned REAL, last_sample_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS trips_user ON trips(user_id, started_at);
 CREATE TABLE IF NOT EXISTS trip_legs (
@@ -73,6 +73,11 @@ CREATE TABLE IF NOT EXISTS anomalies (
 CREATE TABLE IF NOT EXISTS devices (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, created_at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS devices_user ON devices(user_id);
 `);
+
+// Bancos criados antes da retenção não têm a coluna; `CREATE TABLE IF NOT EXISTS` não a acrescenta.
+if (!db.prepare("SELECT 1 FROM pragma_table_info('trips') WHERE name = 'last_sample_at'").get()) {
+  db.exec('ALTER TABLE trips ADD COLUMN last_sample_at INTEGER');
+}
 
 type Row = Record<string, string | number | null>;
 
@@ -309,9 +314,11 @@ export function getPlan(userId: string, planId: string): PlanResponse | null {
 
 // ---------- amostras ----------
 
-export function insertSamples(tripId: string, samples: TraceSample[]): void {
+/** Grava as amostras e marca a atividade da viagem com o relógio do servidor (usado na retenção). */
+export function insertSamples(tripId: string, samples: TraceSample[], now = Date.now()): void {
   const stmt = db.prepare('INSERT INTO samples (trip_id, t, lat, lon, speed, heading, accuracy) VALUES (?, ?, ?, ?, ?, ?, ?)');
   for (const s of samples) stmt.run(tripId, s.t, s.lat, s.lon, s.speed ?? null, s.heading ?? null, s.accuracy ?? null);
+  db.prepare('UPDATE trips SET last_sample_at = ? WHERE id = ?').run(now, tripId);
 }
 
 export function getSamples(tripId: string): TraceSample[] {
@@ -329,8 +336,6 @@ export function getSamples(tripId: string): TraceSample[] {
 
 /** Viagem ativa sem encerramento por mais que isso conta como abandonada. */
 const ABANDONED_TRIP_MS = 86_400_000;
-/** Folga para o relógio do aparelho adiantado. Amostra além disso no futuro não conta como atividade. */
-const CLOCK_SKEW_MS = 5 * 60_000;
 
 /**
  * Apaga o rastro GPS bruto e os planos (origem, destino e geometria) das viagens encerradas há mais
@@ -341,16 +346,15 @@ const CLOCK_SKEW_MS = 5 * 60_000;
 export function purgeExpiredTraces(retentionMs: number, now = Date.now()): { samples: number; plans: number; alerts: number } {
   const cutoff = now - retentionMs;
   const abandonedCutoff = now - Math.max(retentionMs, ABANDONED_TRIP_MS);
-  // Ativa: abandono conta da última atividade (início ou amostra mais recente), não da idade da viagem.
-  // Amostra com horário no futuro (relógio errado ou forjado) é ignorada, para não adiar o abandono.
+  // Ativa: abandono conta do último envio de amostras pelo relógio do servidor, não da idade da viagem
+  // nem do `t` das amostras, que vem do aparelho e pode estar no futuro.
   const expired = `SELECT id FROM trips WHERE (status != 'active' AND finished_at < ?)
-    OR (status = 'active' AND MAX(started_at, COALESCE((SELECT MAX(t) FROM samples WHERE trip_id = trips.id AND t <= ?), 0)) < ?)`;
-  const latest = now + CLOCK_SKEW_MS;
+    OR (status = 'active' AND COALESCE(last_sample_at, started_at) < ?)`;
   return transaction(() => {
-    const samples = db.prepare(`DELETE FROM samples WHERE trip_id IN (${expired})`).run(cutoff, latest, abandonedCutoff);
+    const samples = db.prepare(`DELETE FROM samples WHERE trip_id IN (${expired})`).run(cutoff, abandonedCutoff);
     const plans = db
       .prepare(`DELETE FROM plans WHERE created_at < ? AND id NOT IN (SELECT plan_id FROM trip_legs WHERE trip_id NOT IN (${expired}))`)
-      .run(cutoff, cutoff, latest, abandonedCutoff);
+      .run(cutoff, cutoff, abandonedCutoff);
     db.prepare('DELETE FROM alert_votes WHERE alert_id IN (SELECT id FROM alerts WHERE expires_at < ?)').run(cutoff);
     const alerts = db.prepare('DELETE FROM alerts WHERE expires_at < ?').run(cutoff);
     return { samples: Number(samples.changes), plans: Number(plans.changes), alerts: Number(alerts.changes) };

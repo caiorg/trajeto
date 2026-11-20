@@ -80,13 +80,13 @@ describe('retenção dos rastros GPS', () => {
     expect(planExists(planId)).toBe(true);
   });
 
-  it('amostra com horário no futuro não adia o abandono', async () => {
+  it('abandono usa o relógio do servidor, não o horário que o aparelho manda', async () => {
     const user = await register();
     const { tripId } = await api.drive(user, false);
-    db.prepare('UPDATE trips SET started_at = started_at - ? WHERE id = ?').run(30 * HOUR_MS, tripId);
-    db.prepare('UPDATE samples SET t = t - ? WHERE trip_id = ?').run(30 * HOUR_MS, tripId);
-    const future = { t: Date.now() + 365 * DAY_MS, lat: -23.5, lon: -46.6 };
+    // Último envio há 30 horas, com um ponto marcado 23 horas no futuro (fica no passado em limpezas seguintes).
+    const future = { t: Date.now() + 23 * HOUR_MS, lat: -23.5, lon: -46.6 };
     expect((await call(user, 'POST', `/trips/${tripId}/samples`, { samples: [future] })).status).toBe(200);
+    db.prepare('UPDATE trips SET started_at = ?, last_sample_at = ? WHERE id = ?').run(Date.now() - 31 * HOUR_MS, Date.now() - 30 * HOUR_MS, tripId);
 
     purgeExpiredTraces(DAY_MS);
     expect(samplesOf(tripId)).toBe(0);
