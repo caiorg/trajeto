@@ -174,17 +174,20 @@ export function rerouteRequest(
 
 export const STOP_VISITED_RADIUS_M = 50;
 
-/** Marca como visitadas as paradas a menos de `radiusM` da posição. Devolve o mesmo array se nada mudou. */
+/**
+ * Marca como visitadas as paradas a menos de `radiusM` da posição. A rota passa pelas paradas na
+ * ordem do array, então as anteriores à última visitada também contam como visitadas (puladas).
+ * Devolve o mesmo array se nada mudou.
+ */
 export function markVisitedStops(
   stops: TripStop[],
   fix: Pick<NavFix, 'lat' | 'lon'>,
   radiusM = STOP_VISITED_RADIUS_M,
 ): TripStop[] {
-  let changed = false;
-  const next = stops.map((s) => {
-    if (s.visited || haversine([s.lon, s.lat], [fix.lon, fix.lat]) > radiusM) return s;
-    changed = true;
-    return { ...s, visited: true };
+  let last = -1;
+  stops.forEach((s, i) => {
+    if (s.visited || haversine([s.lon, s.lat], [fix.lon, fix.lat]) <= radiusM) last = i;
   });
-  return changed ? next : stops;
+  if (stops.every((s, i) => s.visited || i > last)) return stops;
+  return stops.map((s, i) => (s.visited || i > last ? s : { ...s, visited: true }));
 }
