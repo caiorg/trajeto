@@ -1,5 +1,5 @@
 import type { PlanRequest, PlanResponse } from './api';
-import { cumulativeDistances, haversine, projectOnPolyline, type Coord } from './geo';
+import { cumulativeDistances, haversine, projectOnPolyline, type Coord, type Projection } from './geo';
 import { spokenInstruction } from './instructions';
 import type { LatLon, Maneuver, Route, RouteOptions } from './types';
 
@@ -145,7 +145,10 @@ export function createNavigator(route: Route, opts: NavigatorOptions = {}) {
     };
   }
 
-  return { update, totalM: total };
+  /** Projeta um ponto na rota inteira (ex.: uma parada), sem mexer no estado da navegação. */
+  const project = (p: LatLon): Projection => projectOnPolyline(coords, cum, [p.lon, p.lat]);
+
+  return { update, project, totalM: total };
 }
 
 export type Navigator = ReturnType<typeof createNavigator>;
@@ -173,20 +176,36 @@ export function rerouteRequest(
 }
 
 export const STOP_VISITED_RADIUS_M = 50;
+/** Distância máxima entre a parada e a rota para o avanço contar como passagem por ela. */
+export const STOP_ON_ROUTE_M = 150;
 
 /**
- * Marca como visitadas as paradas a menos de `radiusM` da posição. A rota passa pelas paradas na
- * ordem do array, então as anteriores à última visitada também contam como visitadas (puladas).
- * Devolve o mesmo array se nada mudou.
+ * Marca como visitadas as paradas a menos de `radiusM` da posição. Com `progress`, também conta
+ * como visitada a parada que a rota já deixou para trás (avanço além dela), o que cobre a última
+ * parada pulada. A rota passa pelas paradas na ordem do array, então as anteriores à última
+ * visitada também contam como visitadas (puladas). Devolve o mesmo array se nada mudou.
  */
+export interface RouteProgress {
+  /** Avanço na rota em navegação (`NavState.alongM`). */
+  alongM: number;
+  /** Projeção na mesma rota (`Navigator.project`). */
+  project: (p: LatLon) => Pick<Projection, 'alongM' | 'offsetM'>;
+}
+
 export function markVisitedStops(
   stops: TripStop[],
   fix: Pick<NavFix, 'lat' | 'lon'>,
+  progress?: RouteProgress,
   radiusM = STOP_VISITED_RADIUS_M,
 ): TripStop[] {
   let last = -1;
+  const passed = (s: TripStop) => {
+    if (!progress) return false;
+    const p = progress.project(s);
+    return p.offsetM <= STOP_ON_ROUTE_M && progress.alongM > p.alongM + radiusM;
+  };
   stops.forEach((s, i) => {
-    if (s.visited || haversine([s.lon, s.lat], [fix.lon, fix.lat]) <= radiusM) last = i;
+    if (s.visited || haversine([s.lon, s.lat], [fix.lon, fix.lat]) <= radiusM || passed(s)) last = i;
   });
   if (stops.every((s, i) => s.visited || i > last)) return stops;
   return stops.map((s, i) => (s.visited || i > last ? s : { ...s, visited: true }));

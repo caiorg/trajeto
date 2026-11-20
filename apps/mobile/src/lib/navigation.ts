@@ -144,7 +144,7 @@ function onFix(fix: NavFix) {
   if (!navigator || finishing) return;
   const st = navigator.update(fix);
   const s = useNavSession.getState();
-  const stops = markVisitedStops(s.stops, fix);
+  const stops = markVisitedStops(s.stops, fix, { alongM: st.alongM, project: navigator.project });
   useNavSession.setState(stops === s.stops ? { nav: st } : { nav: st, stops });
   if (st.announcement) speak(st.announcement);
   if (!s.simulated) buffer.push({ t: fix.t, lat: fix.lat, lon: fix.lon, speed: fix.speed ?? null, heading: fix.heading ?? null, accuracy: fix.accuracy ?? null });

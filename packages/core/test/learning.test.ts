@@ -406,6 +406,31 @@ describe('navegação', () => {
     stops = markVisitedStops(stops, offRoute);
     expect(rerouteRequest(plan, offRoute, stops, opts).waypoints).toEqual([]);
   });
+
+  it('recálculo não volta para a última parada pulada', () => {
+    const r = makeRoute('r', HOME, WORK);
+    const plan = { destination: { lat: WORK[1], lon: WORK[0] }, destinationName: 'Trabalho' };
+    const opts = { avoidTolls: false, avoidHighways: false, avoidFerries: false };
+    const ll = ([lon, lat]: Coord) => ({ lat, lon });
+    const a = ll(r.geometry[20]!);
+    const b = ll(r.geometry[60]!);
+    let stops: TripStop[] = [a, b].map((p) => ({ ...p, visited: false }));
+    const nav = createNavigator(r);
+
+    // Segue a rota, passa por A e nunca chega a menos de 100 m de B.
+    let t = 0;
+    for (const p of r.geometry.slice(0, 77)) {
+      if (haversine(p, [b.lon, b.lat]) < 100) continue;
+      const fix = { t: (t += 5000), lat: p[1], lon: p[0], accuracy: 5 };
+      stops = markVisitedStops(stops, fix, { alongM: nav.update(fix).alongM, project: nav.project });
+      if (t === 5000 * 30) expect(stops.map((s) => s.visited)).toEqual([true, false]);
+    }
+
+    // Sai da rota perto do destino: o recálculo vai direto para ele.
+    const offRoute = { t: (t += 5000), lat: WORK[1] + 0.002, lon: WORK[0] + 0.002, accuracy: 5 };
+    stops = markVisitedStops(stops, offRoute, { alongM: nav.update(offRoute).alongM, project: nav.project });
+    expect(rerouteRequest(plan, offRoute, stops, opts).waypoints).toEqual([]);
+  });
 });
 
 function mulberry(seed: number) {
