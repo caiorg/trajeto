@@ -306,6 +306,82 @@ export function getSamples(tripId: string): TraceSample[] {
   }));
 }
 
+// ---------- retenção e dados do usuário (LGPD) ----------
+
+/** Viagem ativa sem encerramento por mais que isso conta como abandonada. */
+const ABANDONED_TRIP_MS = 86_400_000;
+
+/**
+ * Apaga o rastro GPS bruto e os planos (origem, destino e geometria) das viagens encerradas há mais
+ * de `retentionMs`. Depois do encerramento, o aprendizado só usa as estatísticas por trecho, que ficam.
+ * Viagem ativa só perde o rastro depois de abandonada, para o prazo curto não cortar uma viagem em curso.
+ * Alertas expirados há mais de `retentionMs` saem com os votos: guardam coordenada, horário e autor.
+ */
+export function purgeExpiredTraces(retentionMs: number, now = Date.now()): { samples: number; plans: number; alerts: number } {
+  const cutoff = now - retentionMs;
+  const abandonedCutoff = now - Math.max(retentionMs, ABANDONED_TRIP_MS);
+  const expired = `SELECT id FROM trips WHERE (status != 'active' AND finished_at < ?) OR (status = 'active' AND started_at < ?)`;
+  return transaction(() => {
+    const samples = db.prepare(`DELETE FROM samples WHERE trip_id IN (${expired})`).run(cutoff, abandonedCutoff);
+    const plans = db
+      .prepare(`DELETE FROM plans WHERE created_at < ? AND id NOT IN (SELECT plan_id FROM trip_legs WHERE trip_id NOT IN (${expired}))`)
+      .run(cutoff, cutoff, abandonedCutoff);
+    db.prepare('DELETE FROM alert_votes WHERE alert_id IN (SELECT id FROM alerts WHERE expires_at < ?)').run(cutoff);
+    const alerts = db.prepare('DELETE FROM alerts WHERE expires_at < ?').run(cutoff);
+    return { samples: Number(samples.changes), plans: Number(plans.changes), alerts: Number(alerts.changes) };
+  });
+}
+
+const OWN_TRIPS = 'trip_id IN (SELECT id FROM trips WHERE user_id = ?)';
+
+/**
+ * Tudo o que o servidor guarda ligado a um usuário; exportar e apagar usam a mesma lista.
+ * Filhos antes de `trips`, porque o filtro deles depende das viagens. O hash do token do aparelho não é exportado.
+ * O agregado (`CROWD`) não guarda quem contribuiu, então não entra aqui.
+ */
+const USER_TABLES: { table: string; where: string; columns?: string }[] = [
+  { table: 'samples', where: OWN_TRIPS },
+  { table: 'trip_legs', where: OWN_TRIPS },
+  { table: 'trips', where: 'user_id = ?' },
+  { table: 'plans', where: 'user_id = ?' },
+  { table: 'stats', where: 'user_id = ?' },
+  { table: 'anomalies', where: 'user_id = ?' },
+  { table: 'places', where: 'user_id = ?' },
+  { table: 'routines', where: 'user_id = ?' },
+  { table: 'prefs', where: 'user_id = ?' },
+  { table: 'privacy', where: 'user_id = ?' },
+  { table: 'alerts', where: 'reporter = ?' },
+  { table: 'alert_votes', where: 'user_id = ?' },
+  { table: 'devices', where: 'user_id = ?', columns: 'created_at' },
+];
+
+export interface UserDataExport {
+  userId: string;
+  exportedAt: string;
+  tables: Record<string, Row[]>;
+}
+
+export function exportUserData(userId: string): UserDataExport {
+  const tables: Record<string, Row[]> = {};
+  for (const t of USER_TABLES) tables[t.table] = db.prepare(`SELECT ${t.columns ?? '*'} FROM ${t.table} WHERE ${t.where}`).all(userId) as Row[];
+  return { userId, exportedAt: new Date().toISOString(), tables };
+}
+
+/**
+ * Apaga todos os dados do usuário, inclusive os aparelhos: o token deixa de valer.
+ * Alertas que ele criou continuam para a comunidade, sem autor; os votos dele saem, e a contagem do alerta fica.
+ */
+export function deleteUserData(userId: string): Record<string, number> {
+  return transaction(() => {
+    const deleted: Record<string, number> = {};
+    for (const t of USER_TABLES) {
+      const sql = t.table === 'alerts' ? `UPDATE alerts SET reporter = '${CROWD}' WHERE ${t.where}` : `DELETE FROM ${t.table} WHERE ${t.where}`;
+      deleted[t.table] = Number(db.prepare(sql).run(userId).changes);
+    }
+    return deleted;
+  });
+}
+
 // ---------- alertas ----------
 
 export const toAlert = (r: Row): RoadAlert => ({

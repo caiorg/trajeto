@@ -78,6 +78,8 @@ export const config = {
     /** Distância máxima entre o ponto atual (e o destino) e os pontos usados quando a rota foi guardada. */
     routeRadiusM: suggestionEnv.SUGGESTION_ROUTE_RADIUS_M ?? 250,
   },
+  /** Horas que o rastro GPS de uma viagem encerrada fica no servidor. Ver docs/privacidade.md. */
+  gpsRetentionHours: Number(env.GPS_RETENTION_HOURS ?? 24),
   ai: {
     provider,
     model: aiEnv.AI_MODEL ?? (provider === 'anthropic' ? 'claude-opus-5-5' : null),
@@ -93,3 +95,6 @@ if ((provider === 'openai' || provider === 'ollama' || provider === 'openrouter'
   );
 }
 if (provider === 'openrouter' && !config.ai.apiKey) throw new Error('OPENROUTER_API_KEY é obrigatório para AI_PROVIDER=openrouter.');
+if (!Number.isFinite(config.gpsRetentionHours) || config.gpsRetentionHours < 0) {
+  throw new Error('GPS_RETENTION_HOURS deve ser um número de horas maior ou igual a zero.');
+}

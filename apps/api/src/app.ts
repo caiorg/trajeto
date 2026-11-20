@@ -21,6 +21,8 @@ import { config } from './config';
 import {
   alertsInBox,
   db,
+  deleteUserData,
+  exportUserData,
   getPlaces,
   getPlan,
   getPrefs,
@@ -84,8 +86,8 @@ function vote(userId: string, alertId: string, up: boolean) {
 /** Monta a API sem abrir porta, para o servidor e para os testes (`app.inject`). */
 export async function buildApp(opts: { logger?: boolean } = {}) {
   const app = Fastify({ logger: opts.logger === false ? false : { level: process.env.LOG_LEVEL ?? 'info' }, bodyLimit: 2 * 1024 * 1024 });
-  // O padrão do plugin só libera GET, HEAD e POST; o app web também usa PUT e PATCH.
-  await app.register(cors, { origin: config.corsOrigin, methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH'] });
+  // O padrão do plugin só libera GET, HEAD e POST; o app web também usa PUT, PATCH e DELETE.
+  await app.register(cors, { origin: config.corsOrigin, methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'] });
 
   app.setErrorHandler((err, req, reply) => {
     if (err instanceof ZodError) return reply.status(400).send({ error: 'Requisição inválida', issues: err.issues });
@@ -164,6 +166,14 @@ export async function buildApp(opts: { logger?: boolean } = {}) {
     setShareCrowd(userId, PrivacySchema.parse(req.body).shareCrowd);
     return { shareCrowd: getShareCrowd(userId) };
   });
+
+  // Portabilidade e eliminação (LGPD art. 18). O que é guardado está em docs/privacidade.md.
+  app.get('/me/export', async (req, reply) => {
+    const data = exportUserData(userOf(req));
+    return reply.header('content-disposition', 'attachment; filename="wayboo-dados.json"').send(data);
+  });
+
+  app.delete('/me', async (req) => ({ deleted: deleteUserData(userOf(req)) }));
 
   // ---------- alertas da comunidade ----------
 
