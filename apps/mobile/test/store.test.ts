@@ -1,0 +1,150 @@
+import * as SecureStore from 'expo-secure-store';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const h = vi.hoisted(() => ({
+  os: 'ios',
+  async: new Map<string, string>(),
+  secure: new Map<string, string>(),
+  secureFails: false,
+  secureReadFails: false,
+}));
+
+vi.mock('react-native', () => ({
+  Platform: {
+    get OS() {
+      return h.os;
+    },
+  },
+}));
+vi.mock('expo-constants', () => ({ default: { expoConfig: null } }));
+vi.mock('expo-crypto', () => ({ randomUUID: () => crypto.randomUUID() }));
+vi.mock('@react-native-async-storage/async-storage', () => ({
+  default: {
+    getItem: async (k: string) => h.async.get(k) ?? null,
+    setItem: async (k: string, v: string) => void h.async.set(k, v),
+    removeItem: async (k: string) => void h.async.delete(k),
+  },
+}));
+vi.mock('expo-secure-store', () => ({
+  getItemAsync: vi.fn(async (k: string) => {
+    if (h.secureReadFails) throw new Error('keychain bloqueado');
+    return h.secure.get(k) ?? null;
+  }),
+  setItemAsync: vi.fn(async (k: string, v: string) => {
+    if (h.secureFails) throw new Error('keychain indisponível');
+    h.secure.set(k, v);
+  }),
+  deleteItemAsync: vi.fn(async (k: string) => void h.secure.delete(k)),
+}));
+
+const URL_A = 'http://192.168.0.10:8787';
+
+/** Importa o store do zero, como numa abertura do app, e espera a hidratação. */
+async function openApp() {
+  vi.resetModules();
+  const store = await import('../src/lib/store');
+  await store.settingsHydration;
+  return store;
+}
+
+const savedJson = () => h.async.get('wayboo-settings') ?? '';
+
+/** Estado salvo por uma versão anterior do app: token em texto puro no AsyncStorage. */
+function seedPlainToken() {
+  h.async.set(
+    'wayboo-settings',
+    JSON.stringify({ state: { userId: 'local-1', credentials: { [URL_A]: { token: 'TOKEN-A', userId: 'user-a' } }, apiUrl: URL_A }, version: 0 }),
+  );
+}
+
+beforeEach(() => {
+  h.os = 'ios';
+  h.async.clear();
+  h.secure.clear();
+  h.secureFails = false;
+  h.secureReadFails = false;
+  vi.clearAllMocks();
+});
+
+describe('token do aparelho', () => {
+  it('no nativo, grava o token no secure store e não no AsyncStorage', async () => {
+    const { useSettings } = await openApp();
+    useSettings.getState().setCredential(URL_A, { token: 'TOKEN-A', userId: 'user-a' });
+
+    await vi.waitFor(() => expect([...h.secure.values()]).toContain('TOKEN-A'));
+    await vi.waitFor(() => expect(savedJson()).toContain('user-a'));
+    expect(savedJson()).not.toContain('TOKEN-A');
+  });
+
+  it('migra o token do AsyncStorage para o secure store sem perder a sessão', async () => {
+    seedPlainToken();
+    const { useSettings } = await openApp();
+
+    expect(useSettings.getState().credentials[URL_A]).toEqual({ token: 'TOKEN-A', userId: 'user-a' });
+    await vi.waitFor(() => expect([...h.secure.values()]).toContain('TOKEN-A'));
+    await vi.waitFor(() => expect(savedJson()).not.toContain('TOKEN-A'));
+    expect(savedJson()).toContain('user-a');
+
+    // Próxima abertura: o token vem do secure store.
+    const reopened = await openApp();
+    expect(reopened.useSettings.getState().credentials[URL_A]).toEqual({ token: 'TOKEN-A', userId: 'user-a' });
+  });
+
+  it('mantém o token no AsyncStorage enquanto o secure store falhar', async () => {
+    seedPlainToken();
+    h.secureFails = true;
+    const { useSettings } = await openApp();
+
+    expect(useSettings.getState().credentials[URL_A]).toEqual({ token: 'TOKEN-A', userId: 'user-a' });
+    useSettings.getState().set({ voice: false });
+    await vi.waitFor(() => expect(savedJson()).toContain('"voice":false'));
+    expect(savedJson()).toContain('TOKEN-A');
+
+    // Secure store volta a funcionar: a próxima abertura conclui a migração.
+    h.secureFails = false;
+    const reopened = await openApp();
+    expect(reopened.useSettings.getState().credentials[URL_A]).toEqual({ token: 'TOKEN-A', userId: 'user-a' });
+    await vi.waitFor(() => expect(savedJson()).not.toContain('TOKEN-A'));
+  });
+
+  it('com falha na leitura do secure store, não grava por cima dos ajustes salvos', async () => {
+    seedPlainToken();
+    await openApp();
+    await vi.waitFor(() => expect(savedJson()).not.toContain('TOKEN-A'));
+    const before = savedJson();
+
+    h.secureReadFails = true;
+    const { useSettings, settingsHydration } = await openApp();
+    expect(await settingsHydration).not.toBeNull();
+    useSettings.getState().set({ voice: false });
+    useSettings.getState().setCredential('http://outro:8787', { token: 'TOKEN-B' });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(savedJson()).toBe(before);
+    expect([...h.secure.values()]).toEqual(['TOKEN-A']);
+  });
+
+  it('não grava antes de a hidratação terminar', async () => {
+    seedPlainToken();
+    vi.resetModules();
+    const { useSettings, settingsHydration } = await import('../src/lib/store');
+    // Antes da leitura: o estado ainda é o padrão.
+    useSettings.getState().set({ voice: false });
+    await settingsHydration;
+
+    expect(useSettings.getState().credentials[URL_A]).toEqual({ token: 'TOKEN-A', userId: 'user-a' });
+    await vi.waitFor(() => expect(savedJson()).not.toContain('TOKEN-A'));
+    expect(savedJson()).toContain('user-a');
+    expect(savedJson()).toContain('local-1');
+  });
+
+  it('na web, o token continua no AsyncStorage', async () => {
+    h.os = 'web';
+    const { useSettings } = await openApp();
+    useSettings.getState().setCredential(URL_A, { token: 'TOKEN-A', userId: 'user-a' });
+
+    await vi.waitFor(() => expect(savedJson()).toContain('TOKEN-A'));
+    expect(SecureStore.setItemAsync).not.toHaveBeenCalled();
+    expect(SecureStore.getItemAsync).not.toHaveBeenCalled();
+  });
+});

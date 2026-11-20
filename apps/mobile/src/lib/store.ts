@@ -1,9 +1,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 import { randomUUID } from 'expo-crypto';
+import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 import { create } from 'zustand';
-import { createJSONStorage, persist } from 'zustand/middleware';
+import { persist, type PersistStorage, type StorageValue } from 'zustand/middleware';
 
 /**
  * URL padrão da API: variável EXPO_PUBLIC_API_URL; senão, o IP da máquina que serve o
@@ -20,21 +21,115 @@ function defaultApiUrl(): string {
 /** Chave usada antes da renomeação para Wayboo. É lida uma vez para manter o `userId` e as preferências. */
 const LEGACY_SETTINGS_KEY = 'trajeto-settings';
 
-/** AsyncStorage que, sem valor na chave nova, move o da chave antiga para ela. */
-const settingsStorage = createJSONStorage(() => ({
-  getItem: async (name: string) => {
-    const value = await AsyncStorage.getItem(name);
-    if (value !== null) return value;
-    const legacy = await AsyncStorage.getItem(LEGACY_SETTINGS_KEY);
-    if (legacy !== null) {
-      await AsyncStorage.setItem(name, legacy);
-      await AsyncStorage.removeItem(LEGACY_SETTINGS_KEY);
+/** Lê a chave nova; sem valor nela, move o da chave antiga para ela. */
+async function readSettings(name: string): Promise<string | null> {
+  const value = await AsyncStorage.getItem(name);
+  if (value !== null) return value;
+  const legacy = await AsyncStorage.getItem(LEGACY_SETTINGS_KEY);
+  if (legacy !== null) {
+    await AsyncStorage.setItem(name, legacy);
+    await AsyncStorage.removeItem(LEGACY_SETTINGS_KEY);
+  }
+  return legacy;
+}
+
+/** O secure store não existe na web; lá o token continua no AsyncStorage. */
+const secureTokens = Platform.OS !== 'web';
+
+/** Chave do token de um servidor. O secure store só aceita letras, números, `.`, `-` e `_`; `_XX` escapa o resto da URL. */
+function tokenKey(apiUrl: string): string {
+  const escaped = encodeURIComponent(apiUrl).replace(/[^A-Za-z0-9.\-%]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')}`);
+  return `wayboo-token.${escaped.replace(/%/g, '_')}`;
+}
+
+/** Token gravado no secure store por servidor: evita regravar a cada ajuste e diz o que apagar. */
+const secureSaved = new Map<string, string>();
+
+/**
+ * Grava os tokens no secure store e devolve as credenciais sem eles, para o AsyncStorage.
+ * Se o secure store recusar um token, ele fica no AsyncStorage como antes: perder a sessão é pior.
+ */
+async function moveTokensToSecureStore(credentials: Record<string, DeviceCredential>): Promise<Record<string, Partial<DeviceCredential>>> {
+  const rest: Record<string, Partial<DeviceCredential>> = {};
+  for (const [url, { token, ...withoutToken }] of Object.entries(credentials)) {
+    rest[url] = withoutToken;
+    if (secureSaved.get(url) === token) continue;
+    try {
+      await SecureStore.setItemAsync(tokenKey(url), token);
+      secureSaved.set(url, token);
+    } catch {
+      rest[url] = { token, ...withoutToken };
     }
-    return legacy;
-  },
-  setItem: (name: string, value: string) => AsyncStorage.setItem(name, value),
-  removeItem: (name: string) => AsyncStorage.removeItem(name),
-}));
+  }
+  for (const url of [...secureSaved.keys()]) {
+    if (url in credentials) continue;
+    try {
+      await SecureStore.deleteItemAsync(tokenKey(url));
+      secureSaved.delete(url);
+    } catch {
+      // Fica em `secureSaved`: a próxima gravação tenta apagar de novo.
+    }
+  }
+  return rest;
+}
+
+type Persisted = StorageValue<Settings>;
+
+/** O zustand não espera um `setItem` antes do próximo: sem fila, uma gravação antiga poderia terminar por último. */
+let queue: Promise<unknown> = Promise.resolve();
+function serial<T>(fn: () => Promise<T>): Promise<T> {
+  const next = queue.then(fn);
+  queue = next.catch(() => {});
+  return next;
+}
+
+async function writeSettings(name: string, value: Persisted): Promise<void> {
+  const state = secureTokens ? { ...value.state, credentials: await moveTokensToSecureStore(value.state.credentials ?? {}) } : value.state;
+  await AsyncStorage.setItem(name, JSON.stringify({ ...value, state }));
+}
+
+/**
+ * Ajustes no AsyncStorage; no nativo, tokens no secure store. O token em texto puro de versões
+ * anteriores vale até ser movido e, depois de gravado no secure store, sai do AsyncStorage.
+ */
+const settingsStorage: PersistStorage<Settings> = {
+  getItem: (name) =>
+    serial(async () => {
+      const raw = await readSettings(name);
+      if (raw === null) return null;
+      const value = JSON.parse(raw) as Persisted;
+      if (!secureTokens) return value;
+      const stored = (value.state.credentials ?? {}) as Record<string, Partial<DeviceCredential>>;
+      const credentials: Record<string, DeviceCredential> = {};
+      let plainText = false;
+      for (const [url, saved] of Object.entries(stored)) {
+        // Erro de leitura sobe para a hidratação: registrar outro token trocaria a identidade.
+        const secure = await SecureStore.getItemAsync(tokenKey(url));
+        if (secure !== null) secureSaved.set(url, secure);
+        if (saved.token) plainText = true;
+        const token = saved.token ?? secure;
+        // Sem token, a credencial não serve; o app registra o aparelho de novo.
+        if (token) credentials[url] = { ...saved, token };
+      }
+      value.state = { ...value.state, credentials };
+      if (plainText) {
+        try {
+          await writeSettings(name, value);
+        } catch {
+          // A sessão já está em memória; a próxima gravação tenta de novo.
+        }
+      }
+      return value;
+    }),
+  // Antes da hidratação, ou se ela falhou, o estado em memória é o padrão (outro `userId`, sem credenciais):
+  // gravá-lo apagaria a identidade salva. O zustand não grava ao aplicar o estado lido.
+  setItem: (name, value) => (useSettings.persist.hasHydrated() ? serial(() => writeSettings(name, value)) : Promise.resolve()),
+  removeItem: (name) =>
+    serial(async () => {
+      await AsyncStorage.removeItem(name);
+      if (secureTokens) await moveTokensToSecureStore({});
+    }),
+};
 
 export type ThemePref = 'system' | 'light' | 'dark';
 
