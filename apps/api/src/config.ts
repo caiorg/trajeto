@@ -54,6 +54,13 @@ const API_KEY: Partial<Record<AiProviderName, string | undefined>> = {
   openrouter: aiEnv.OPENROUTER_API_KEY,
 };
 
+/** Estilos do mapa no servidor próprio, anunciados em `/health`. Sem `MAP_STYLE_URL`, o app usa os do OpenFreeMap. */
+const MapEnv = z.object({
+  MAP_STYLE_URL: optionalText.pipe(z.url().optional()),
+  MAP_STYLE_DARK_URL: optionalText.pipe(z.url().optional()),
+});
+const mapEnv = MapEnv.parse(env);
+
 export const config = {
   port: Number(env.PORT ?? 8787),
   host: env.HOST ?? '0.0.0.0',
@@ -62,6 +69,7 @@ export const config = {
   valhallaUrl: (env.VALHALLA_URL ?? 'https://valhalla1.openstreetmap.de').replace(/\/$/, ''),
   photonUrl: (env.PHOTON_URL ?? 'https://photon.komoot.io').replace(/\/$/, ''),
   openMeteoUrl: (env.OPEN_METEO_URL ?? 'https://api.open-meteo.com').replace(/\/$/, ''),
+  mapStyles: mapEnv.MAP_STYLE_URL ? { light: mapEnv.MAP_STYLE_URL, dark: mapEnv.MAP_STYLE_DARK_URL ?? mapEnv.MAP_STYLE_URL } : null,
   corsOrigin: env.CORS_ORIGIN ?? true,
   ai: {
     provider,

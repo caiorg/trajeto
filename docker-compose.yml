@@ -1,0 +1,156 @@
+# Wayboo self-host: API, roteamento (Valhalla), busca (Photon) e mapa (PMTiles) a partir de um extrato OSM.
+# Guia: docs/self-host.md. Configuração: copie .env.example para .env.
+#
+# Na primeira subida, os serviços de preparo (osm-extract, tiles-build, map-assets) baixam os dados e
+# geram os tiles; depois disso a stack não chama serviço externo, exceto o clima (Open-Meteo, opcional).
+
+name: wayboo
+
+x-restart: &restart
+  restart: unless-stopped
+
+services:
+  # ---------- preparo (rodam até terminar; numa nova subida, só refazem o que mudou) ----------
+
+  osm-extract:
+    image: alpine:3.22
+    environment:
+      OSM_EXTRACT_URL: ${OSM_EXTRACT_URL:-https://download.geofabrik.de/europe/andorra-latest.osm.pbf}
+    volumes:
+      - osm:/custom_files
+    # Baixa de novo só se a URL mudar. O .part evita deixar um extrato incompleto com o nome final.
+    command:
+      - sh
+      - -euc
+      - |
+        cd /custom_files
+        if [ -f region.osm.pbf ] && [ "$$(cat region.url 2>/dev/null)" = "$$OSM_EXTRACT_URL" ]; then
+          echo "Extrato já baixado: $$OSM_EXTRACT_URL"; exit 0
+        fi
+        echo "Baixando $$OSM_EXTRACT_URL"
+        wget -q -O region.osm.pbf.part "$$OSM_EXTRACT_URL"
+        mv region.osm.pbf.part region.osm.pbf
+        printf '%s' "$$OSM_EXTRACT_URL" > region.url
+
+  tiles-build:
+    image: ghcr.io/onthegomap/planetiler:0.10.2
+    depends_on:
+      osm-extract:
+        condition: service_completed_successfully
+    environment:
+      JAVA_TOOL_OPTIONS: -Xmx${PLANETILER_MEMORY:-2g}
+    volumes:
+      - osm:/osm:ro
+      - tiles:/tiles
+    # Gera o PMTiles (esquema OpenMapTiles) só se o extrato mudou. --download busca água, lagos e Natural Earth uma vez.
+    entrypoint:
+      - sh
+      - -euc
+      - |
+        if [ -f /tiles/region.pmtiles ] && [ "$$(cat /tiles/region.url 2>/dev/null)" = "$$(cat /osm/region.url)" ]; then
+          echo "Tiles já gerados para $$(cat /osm/region.url)"; exit 0
+        fi
+        java -cp @/app/jib-classpath-file com.onthegomap.planetiler.Main \
+          --osm-path=/osm/region.osm.pbf --output=/tiles/region.pmtiles --force \
+          --download --download-dir=/tiles/sources --tmpdir=/tiles/tmp
+        rm -rf /tiles/tmp
+        cp /osm/region.url /tiles/region.url
+
+  map-assets:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    image: wayboo-api
+    environment:
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
+    volumes:
+      - map:/srv/map
+    command: ["/app/node_modules/.bin/tsx", "src/scripts/map-assets.ts"]
+
+  # ---------- serviços ----------
+
+  valhalla:
+    <<: *restart
+    image: ghcr.io/valhalla/valhalla-scripted:3.9.3
+    depends_on:
+      osm-extract:
+        condition: service_completed_successfully
+    environment:
+      # Reconstrói o grafo quando o extrato muda (hash do .pbf).
+      use_tiles_ignore_pbf: "False"
+      server_threads: ${VALHALLA_THREADS:-2}
+    volumes:
+      - osm:/custom_files
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://127.0.0.1:8002/status || exit 1"]
+      interval: 30s
+      timeout: 5s
+      # A primeira subida constrói o grafo; num extrato estadual isso leva minutos.
+      start_period: 30m
+
+  photon:
+    <<: *restart
+    image: rtuszik/photon-docker:2.5.0
+    environment:
+      # Índice pronto por região. O Brasil só existe dentro de south-america (ver docs/self-host.md).
+      REGION: ${PHOTON_REGION:-andorra}
+      # Sem atualização automática: ela baixaria o índice de novo de um espelho externo.
+      UPDATE_STRATEGY: DISABLED
+      JAVA_PARAMS: -Xmx${PHOTON_MEMORY:-1g}
+    volumes:
+      - photon:/photon/data
+
+  tiles:
+    <<: *restart
+    image: protomaps/go-pmtiles:v1.31.2
+    depends_on:
+      tiles-build:
+        condition: service_completed_successfully
+    command: ["serve", "/tiles", "--port=8080"]
+    volumes:
+      - tiles:/tiles:ro
+
+  api:
+    <<: *restart
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    image: wayboo-api
+    depends_on:
+      map-assets:
+        condition: service_completed_successfully
+    env_file:
+      - path: .env
+        required: false
+    # O .env leva as variáveis da API (IA, CORS etc.). As de baixo prevalecem: o gateway depende delas.
+    environment:
+      PORT: "8787"
+      DB_PATH: /data/wayboo.db
+      VALHALLA_URL: http://valhalla:8002
+      PHOTON_URL: http://photon:2322
+      MAP_STYLE_URL: ${PUBLIC_URL:-http://localhost:8080}/map/styles/light.json
+      MAP_STYLE_DARK_URL: ${PUBLIC_URL:-http://localhost:8080}/map/styles/dark.json
+    volumes:
+      - api:/data
+
+  # Porta única para o app: API em /, tiles em /tiles, estilos, fontes e sprites em /map.
+  gateway:
+    <<: *restart
+    image: caddy:2.11.9-alpine
+    depends_on:
+      api:
+        condition: service_healthy
+      tiles:
+        condition: service_started
+    ports:
+      - ${GATEWAY_PORT:-8080}:80
+    volumes:
+      - ./selfhost/Caddyfile:/etc/caddy/Caddyfile:ro
+      - map:/srv/map:ro
+
+volumes:
+  osm:
+  tiles:
+  map:
+  photon:
+  api:

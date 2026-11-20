@@ -52,12 +52,21 @@ export interface DeviceCredential {
   userId?: string;
 }
 
+/** Estilos de mapa que o servidor `apiUrl` anunciou em `/health` (self-host). */
+export interface ServerMap {
+  apiUrl: string;
+  light: string;
+  dark: string;
+}
+
 interface Settings {
   /** UUID anônimo do aparelho, de antes dos tokens. Vai em `legacyUserId` para o servidor adotar os dados antigos. */
   userId: string;
   /** Uma credencial por servidor (chave: `normalizeApiUrl`), para voltar a um servidor sem perder a identidade. */
   credentials: Record<string, DeviceCredential>;
   apiUrl: string;
+  /** Salvo para o mapa do servidor próprio abrir já no próximo início, sem passar pelo OpenFreeMap. */
+  serverMap: ServerMap | null;
   voice: boolean;
   theme: ThemePref;
   avoidTolls: boolean;
@@ -78,6 +87,7 @@ export const useSettings = create<Settings>()(
       userId: randomUUID(),
       credentials: {},
       apiUrl: defaultApiUrl(),
+      serverMap: null,
       voice: true,
       theme: 'system',
       avoidTolls: false,

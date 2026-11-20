@@ -1,0 +1,12 @@
+**/node_modules
+.git
+.github
+.env
+.env.*
+**/*.db
+**/*.db-wal
+**/*.db-shm
+docs
+# Do app mobile, a imagem da API só precisa do manifesto (o lockfile cobre todos os workspaces).
+apps/mobile/*
+!apps/mobile/package.json
