@@ -186,6 +186,8 @@ export const api = {
   narrative: () => request<{ text: string | null; provider: string }>('POST', '/insights/narrative', {}, 40000),
   privacy: () => request<Privacy>('GET', '/privacy'),
   setPrivacy: (p: Privacy) => request<Privacy>('PUT', '/privacy', p),
+  /** Todas as linhas deste usuário no servidor, menos o hash do token (docs/privacidade.md). */
+  exportMyData: () => request<unknown>('GET', '/me/export', undefined, 30000),
   /** Apaga tudo deste usuário no servidor. O aparelho troca de token e de id; a próxima chamada registra um usuário novo. */
   deleteMyData: async () => {
     const baseUrl = currentUrl();

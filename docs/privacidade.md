@@ -31,7 +31,7 @@ Com o opt-in de `PUT /privacy` ligado, a viagem soma ao usuário agregado (`user
 
 - `GET /me/export` devolve em JSON todas as linhas das tabelas acima ligadas ao usuário autenticado, menos o hash do token.
 - `DELETE /me` apaga todas essas linhas, inclusive o registro do aparelho, e o token deixa de valer. Alertas criados pelo usuário continuam visíveis para a comunidade até expirar, mas sem autor (`reporter = '*'`). A contagem de votos dos alertas de outras pessoas não muda.
-- No app, Ajustes > Privacidade tem o botão para apagar os dados.
+- No app, Ajustes > Privacidade tem os botões para exportar e para apagar os dados. A exportação baixa o JSON na web e, no Android e no iOS, abre a folha de compartilhamento do sistema.
 
 ## Configuração
 
