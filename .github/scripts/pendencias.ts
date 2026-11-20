@@ -76,8 +76,10 @@ type Issue = {
 };
 type Comment = { body: string | null; user: { login: string } | null };
 
-// Marcadores ficam em texto editável. Só valem em issues e comentários criados por este workflow,
-// para que ninguém consiga plantar um marcador e desviar a deduplicação ou o update do Linear.
+// Marcadores ficam em texto editável. Só valem em issues e comentários criados por este workflow:
+// quem só abre issues ou comenta não consegue plantar um marcador. Quem tem escrita no repo ainda
+// pode editar o corpo de uma issue do bot; esse risco é aceito, porque essa pessoa já pode mudar o
+// tracker diretamente.
 const BOT = 'github-actions[bot]';
 const byBot = (x: { user: { login: string } | null }) => x.user?.login === BOT;
 
