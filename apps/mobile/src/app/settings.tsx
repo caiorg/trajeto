@@ -23,9 +23,12 @@ export default function SettingsScreen() {
   const [exportResult, setExportResult] = useState<ExportResult | null>(null);
 
   const exportData = async () => {
+    const server = normalizeApiUrl(useSettings.getState().apiUrl);
     setExporting(true);
-    setExportResult(await exportMyData());
+    const result = await exportMyData();
     setExporting(false);
+    // Trocou de servidor no meio: a mensagem não vale para o atual.
+    if (normalizeApiUrl(useSettings.getState().apiUrl) === server) setExportResult(result);
   };
 
   const loadPrivacy = async () => {

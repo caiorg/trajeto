@@ -42,6 +42,7 @@ async function send<T>(baseUrl: string, method: Method, path: string, body: unkn
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   let res: Response;
+  let data: { error?: string } | undefined;
   try {
     res = await fetch(`${baseUrl}${path}`, {
       method,
@@ -53,13 +54,16 @@ async function send<T>(baseUrl: string, method: Method, path: string, body: unkn
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: ctrl.signal,
     });
+    // O corpo pode chegar depois dos cabeçalhos: o timeout vale até terminar a leitura.
+    data = (await res.json().catch(() => undefined)) as { error?: string } | undefined;
   } catch {
     throw new ApiError(0, `Sem conexão com o servidor (${baseUrl}). Confira a URL em Ajustes.`);
   } finally {
     clearTimeout(timer);
   }
-  const data = (await res.json().catch(() => ({}))) as { error?: string };
-  if (!res.ok) throw new ApiError(res.status, data.error ?? `Erro ${res.status}`);
+  if (!res.ok) throw new ApiError(res.status, data?.error ?? `Erro ${res.status}`);
+  // Leitura interrompida ou corpo que não é JSON não vira resposta vazia.
+  if (data === undefined) throw new ApiError(0, 'Resposta incompleta do servidor. Tente de novo.');
   return data as T;
 }
 
