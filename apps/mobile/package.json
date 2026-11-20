@@ -28,7 +28,8 @@
   },
   "devDependencies": {
     "@types/react": "~19.3.0",
-    "typescript": "~6.0.3"
+    "typescript": "~6.0.3",
+    "vitest": "^4.0.0"
   },
   "scripts": {
     "start": "expo start",
@@ -37,7 +38,8 @@
     "web": "bun run copy-map-worker && expo start --web",
     "typecheck": "tsc --noEmit",
     "copy-map-worker": "node -e \"const fs=require('fs');fs.mkdirSync('public',{recursive:true});fs.copyFileSync(require.resolve('maplibre-gl/dist/maplibre-gl-worker.mjs'),'public/maplibre-gl-worker.mjs')\"",
-    "postinstall": "bun run copy-map-worker"
+    "postinstall": "bun run copy-map-worker",
+    "test": "vitest run"
   },
   "private": true,
   "license": "AGPL-3.0-only"
