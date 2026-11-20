@@ -1,6 +1,8 @@
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { openRouterProvider } from '../src/ai/providers';
+import { openRouterProvider, openRouterStructuredOutputSupport } from '../src/ai/providers';
 
 const MODEL = 'openai/gpt-4o-mini';
 const KEY = 'sk-or-test';
@@ -19,14 +21,14 @@ const completion = (content: string) =>
     choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content, refusal: null } }],
   });
 
-type Call = { url: string; headers: Headers; body: any };
+type Call = { url: string; headers: Headers; body: any; redirect?: RequestRedirect };
 
 /** Simula o OpenRouter: catálogo de endpoints e chat completions. Nenhuma chamada sai da máquina. */
 function fakeOpenRouter(opts: { catalog: () => Response; content: string }) {
   const calls: Call[] = [];
   const fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input instanceof Request ? input.url : input);
-    calls.push({ url, headers: new Headers(init?.headers), body: init?.body ? JSON.parse(String(init.body)) : null });
+    calls.push({ url, headers: new Headers(init?.headers), body: init?.body ? JSON.parse(String(init.body)) : null, redirect: init?.redirect });
     if (url.endsWith('/endpoints')) return opts.catalog();
     if (url.endsWith('/chat/completions')) return completion(opts.content);
     return json({ error: { code: 404, message: 'Not Found' } }, 404);
@@ -56,6 +58,8 @@ describe('openRouterProvider', () => {
       provider: { require_parameters: true, data_collection: 'deny' },
       response_format: { type: 'json_schema', json_schema: { name: 'route_brief', strict: true } },
     });
+    // Nenhuma requisição segue redirecionamento.
+    expect(or.calls.every((c) => c.redirect === 'error')).toBe(true);
     // O catálogo é consultado uma vez só.
     expect(or.calls.filter((c) => c.url.endsWith('/endpoints'))).toHaveLength(1);
     expect(or.calls.filter((c) => c.url.endsWith('/chat/completions'))).toHaveLength(2);
@@ -84,6 +88,34 @@ describe('openRouterProvider', () => {
 
     expect(await p.generateObject(args)).toEqual({ headline: 'ok', warnings: [] });
     expect(or.calls.some((c) => c.url.endsWith('/chat/completions'))).toBe(true);
+  });
+
+  it('não segue redirecionamento 307/308 para outro servidor', async () => {
+    // Servidores locais de verdade: o fetch nativo seguiria o redirect se a opção faltasse.
+    const listen = (handler: Parameters<typeof createServer>[1]) =>
+      new Promise<Server>((resolve) => {
+        const server = createServer(handler);
+        server.listen(0, '127.0.0.1', () => resolve(server));
+      });
+    const urlOf = (server: Server) => `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const received: string[] = [];
+    const target = await listen((req, res) => {
+      received.push(`${req.method} ${req.url} ${req.headers.authorization ?? ''}`);
+      res.end('{}');
+    });
+    const origin = await listen((req, res) => {
+      res.writeHead(req.url?.endsWith('/endpoints') ? 307 : 308, { location: `${urlOf(target)}${req.url}` });
+      res.end();
+    });
+    try {
+      const baseURL = `${urlOf(origin)}/api/v1`;
+      expect(await openRouterStructuredOutputSupport(MODEL, { apiKey: KEY, baseURL })).toBeNull();
+      await expect(openRouterProvider({ model: MODEL, apiKey: KEY, baseURL }).generateObject(args)).rejects.toThrow();
+      expect(received).toEqual([]);
+    } finally {
+      origin.close();
+      target.close();
+    }
   });
 
   it('recusa AI_BASE_URL em http:// fora de loopback', () => {

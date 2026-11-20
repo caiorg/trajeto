@@ -121,6 +121,8 @@ export async function openRouterStructuredOutputSupport(
     const res = await fetchImpl(`${baseURL.replace(/\/$/, '')}/models/${model}/endpoints`, {
       headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
       signal: AbortSignal.timeout(config.ai.timeoutMs),
+      // Redirect levaria a chave a um destino não validado; o erro cai no catch e conta como catálogo indisponível.
+      redirect: 'error',
     });
     if (!res.ok) return null;
     const parsed = EndpointsCatalog.safeParse(await res.json());
@@ -133,8 +135,10 @@ export async function openRouterStructuredOutputSupport(
 
 /** OpenRouter via API compatível com a OpenAI. Exportado para reuso com chave do usuário. */
 export function openRouterProvider(opts: { model: string; apiKey: string; baseURL?: string; fetch?: Fetch }): LlmProvider {
-  const { model, apiKey, baseURL = OPENROUTER_BASE_URL, fetch: fetchImpl = globalThis.fetch } = opts;
+  const { model, apiKey, baseURL = OPENROUTER_BASE_URL, fetch: baseFetch = globalThis.fetch } = opts;
   assertSecureBaseUrl(baseURL);
+  // A API não redireciona; seguir um 307/308 reenviaria chave e prompt para um destino não validado (talvez http://).
+  const fetchImpl: Fetch = (input, init) => baseFetch(input, { ...init, redirect: 'error' });
   let support: Promise<boolean | null> | undefined;
   return openAiCompatibleProvider({
     name: 'openrouter',
