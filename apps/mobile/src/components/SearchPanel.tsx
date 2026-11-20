@@ -62,6 +62,15 @@ export function SearchPanel({
     onAsk(text);
   };
 
+  /** Foco na entrada ou na dica mantém o painel aberto; sair dos dois fecha após o toque ser processado. */
+  const keepOpen = () => {
+    clearTimeout(blurTimer.current);
+    setFocused(true);
+  };
+  const closeSoon = () => {
+    blurTimer.current = setTimeout(() => setFocused(false), 200);
+  };
+
   const showList = focused && q.trim().length >= 3;
   const showHint = focused && !showList;
 
@@ -73,13 +82,8 @@ export function SearchPanel({
           ref={input}
           value={q}
           onChangeText={setQ}
-          onFocus={() => {
-            clearTimeout(blurTimer.current);
-            setFocused(true);
-          }}
-          onBlur={() => {
-            blurTimer.current = setTimeout(() => setFocused(false), 200);
-          }}
+          onFocus={keepOpen}
+          onBlur={closeSoon}
           onSubmitEditing={() => (results[0] && !NATURAL.test(q) ? onPick(results[0]) : ask())}
           placeholder="Para onde?"
           placeholderTextColor={t.textMuted}
@@ -97,7 +101,10 @@ export function SearchPanel({
       {showHint ? (
         <View style={[styles.list, { borderTopColor: t.border }]}>
           <Pressable
+            accessibilityRole="button"
             accessibilityLabel={`Usar exemplo: ${ASK_EXAMPLE}`}
+            onFocus={keepOpen}
+            onBlur={closeSoon}
             onPress={() => {
               setQ(ASK_EXAMPLE);
               input.current?.focus();
