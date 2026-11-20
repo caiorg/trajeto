@@ -18,11 +18,12 @@ import {
  *
  *   trecho × tipo de dia × horário (do usuário)
  *     → trecho × tipo de dia × horário (de todos os usuários, "crowd")
- *       → trecho em qualquer horário (usuário, depois crowd)
- *         → padrão geral do usuário naquele horário
+ *       → trecho × tipo de dia em qualquer horário (usuário, depois crowd)
+ *         → padrão geral do usuário naquele tipo de dia e horário
  *           → 0 (confia no roteador)
  *
  * Cada nível encolhe em direção ao de baixo quando tem poucas observações.
+ * Nenhum nível mistura tipos de dia: sem viagens de domingo, o domingo não herda o pico dos dias úteis.
  * Por cima disso entram fatores de contexto aprendidos (chuva, visibilidade,
  * alertas) e um resíduo por rotina origem→destino (ex.: tempo para estacionar).
  */
@@ -32,6 +33,7 @@ export type ContextFlag = 'rain' | 'heavy_rain' | 'low_visibility' | 'alerts';
 
 export const statKey = {
   segBin: (seg: string, d: DayType, bin: number) => `sb|${seg}|${d}|${bin}`,
+  /** Trecho em qualquer dia e horário. O ETA não usa (mistura tipos de dia); serve para familiaridade e contagem. */
   seg: (seg: string) => `s|${seg}`,
   global: (d: DayType, bin: number) => `g|${d}|${bin}`,
   ctx: (f: ContextFlag) => `c|${f}`,
@@ -100,6 +102,14 @@ function neighbors(map: StatsMap, seg: string, d: DayType, bin: number) {
   ];
 }
 
+/** Trecho × tipo de dia em qualquer horário: soma de todos os bins do dia, sem chave própria no banco. */
+function dayStat(map: StatsMap, seg: string, d: DayType, now: number) {
+  return pool(
+    Array.from({ length: BINS_PER_DAY }, (_, bin) => ({ s: map.get(statKey.segBin(seg, d, bin)), weight: 1 })),
+    now,
+  );
+}
+
 function globalPrior(user: StatsMap, d: DayType, bin: number, now: number): Shrunk {
   const pooled = pool(
     [
@@ -121,8 +131,8 @@ export function estimateSegment(
   now: number,
 ): SegmentEstimate {
   const g = globalPrior(user, d, bin, now);
-  const crowdSeg = shrink(crowd.get(statKey.seg(seg)), g, 4, now);
-  const userSeg = shrink(user.get(statKey.seg(seg)), crowdSeg, 3, now);
+  const crowdSeg = shrink(dayStat(crowd, seg, d, now), g, 4, now);
+  const userSeg = shrink(dayStat(user, seg, d, now), crowdSeg, 3, now);
   const crowdBin = shrink(pool(neighbors(crowd, seg, d, bin), now), userSeg, 3, now);
   const userBin = shrink(pool(neighbors(user, seg, d, bin), now), crowdBin, 2, now);
   return {

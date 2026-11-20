@@ -272,6 +272,31 @@ describe('ETA aprendido', () => {
     expect(carnaval.durationS / sunday.durationS).toBeCloseTo(1, 1);
   });
 
+  it('sem viagens de domingo, o ETA de domingo não aplica o pico dos dias úteis', () => {
+    const r = makeRoute('r', HOME, WORK);
+    const rnd = mulberry(13);
+    const user: StatsMap = new Map();
+    const crowd: StatsMap = new Map();
+    // Quatro semanas só de dias úteis, sempre às 8h, com pico 2x.
+    for (let day = 0; day < 28; day++) {
+      const depart = at(day, 8, 0);
+      if (localTime(depart, TZ).dayType !== 'weekday') continue;
+      const truth = r.segments.map((s) => s.baseDurationS * 2 * (0.95 + rnd() * 0.1));
+      const trace = analyzeTrace(r, [...simulateDrive(r, truth, depart, 1, 3, rnd)]);
+      const learned = learnFromTrip({ route: r, observations: trace.observations, departAt: depart, timeZone: TZ, user, crowd, ctx: NO_CTX });
+      for (const [k, v] of learned.user) user.set(k, v);
+      for (const [k, v] of learned.crowd) crowd.set(k, v);
+    }
+    const eta = (epoch: number) => predictEta({ route: r, departAt: epoch, timeZone: TZ, user, crowd, ctx: NO_CTX });
+    const sundayAt = at(34, 8, 0);
+    expect(localTime(sundayAt, TZ).dayType).toBe('sunday');
+    const weekday = eta(at(35, 8, 0));
+    const sunday = eta(sundayAt);
+    expect(weekday.durationS / r.baseDurationS).toBeGreaterThan(1.8);
+    expect(sunday.durationS / r.baseDurationS).toBeLessThan(1.15);
+    expect(sunday.confidence).toBeLessThan(weekday.confidence);
+  });
+
   it('aprende o efeito da chuva a partir do resíduo das viagens', () => {
     const r = makeRoute('r', HOME, WORK);
     const user: StatsMap = new Map();
