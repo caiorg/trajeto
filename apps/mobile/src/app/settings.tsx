@@ -10,6 +10,31 @@ export default function SettingsScreen() {
   const s = useSettings();
   const [url, setUrl] = useState(s.apiUrl);
   const [status, setStatus] = useState<string | null>(null);
+  // null enquanto carrega ou sem conexão: o opt-in vive no servidor, não no aparelho.
+  const [shareCrowd, setShareCrowd] = useState<boolean | null>(null);
+  const [privacyError, setPrivacyError] = useState<string | null>(null);
+
+  const loadPrivacy = async () => {
+    try {
+      setShareCrowd((await api.privacy()).shareCrowd);
+      setPrivacyError(null);
+    } catch {
+      setShareCrowd(null);
+      setPrivacyError('Não foi possível ler a opção no servidor.');
+    }
+  };
+
+  const changeShareCrowd = async (v: boolean) => {
+    const prev = shareCrowd;
+    setShareCrowd(v);
+    try {
+      setShareCrowd((await api.setPrivacy({ shareCrowd: v })).shareCrowd);
+      setPrivacyError(null);
+    } catch {
+      setShareCrowd(prev);
+      setPrivacyError('Não foi possível salvar. Confira a conexão com o servidor.');
+    }
+  };
 
   const test = async () => {
     s.set({ apiUrl: url.trim() });
@@ -17,6 +42,7 @@ export default function SettingsScreen() {
     try {
       const h = await api.health();
       setStatus(h.ai ? `Conectado. IA: ${h.ai.provider} (${h.ai.model})` : 'Conectado. IA desativada: o copiloto usa regras.');
+      void loadPrivacy();
     } catch (e) {
       setStatus(e instanceof Error ? e.message : 'Falha');
     }
@@ -60,6 +86,29 @@ export default function SettingsScreen() {
         {row('Instruções por voz', s.voice, (v) => s.set({ voice: v }))}
         {row('Evitar pedágios', s.avoidTolls, (v) => s.set({ avoidTolls: v }), 'O app também aprende isso das suas escolhas.')}
         {row('Evitar rodovias', s.avoidHighways, (v) => s.set({ avoidHighways: v }))}
+      </Card>
+
+      <Card style={{ gap: 10 }}>
+        <T variant="title">Privacidade</T>
+        <View style={styles.row}>
+          <View style={{ flex: 1 }}>
+            <T>Contribuir com o trânsito coletivo</T>
+            <T variant="caption">Desligado por padrão. Desligado, suas viagens só ensinam o seu app, e você continua usando os tempos que outras pessoas compartilham.</T>
+          </View>
+          <Switch
+            value={shareCrowd ?? false}
+            disabled={shareCrowd === null}
+            onValueChange={(v) => void changeShareCrowd(v)}
+            trackColor={{ true: t.primary, false: t.border }}
+            accessibilityLabel="Contribuir com o trânsito coletivo"
+          />
+        </View>
+        <T variant="caption">
+          Ligado, o servidor soma ao total coletivo só quanto cada trecho de rua demorou em relação ao previsto, com o tipo de dia e a faixa
+          de 30 minutos. Não vão rastro GPS, lugares, horário exato nem o identificador deste aparelho. Ao desligar, as próximas viagens
+          deixam de contribuir. O que já foi somado não guarda quem enviou e continua no total.
+        </T>
+        {privacyError ? <T variant="caption" color={t.danger}>{privacyError}</T> : null}
       </Card>
 
       <Card style={{ gap: 10 }}>

@@ -199,6 +199,10 @@ export interface Suggestion {
   message: string;
 }
 
+/** Opt-in do aprendizado coletivo. Desligado, nada da viagem vai para o usuário agregado. */
+export const PrivacySchema = z.object({ shareCrowd: z.boolean() });
+export type Privacy = z.infer<typeof PrivacySchema>;
+
 export const PlacePatchSchema = z.object({
   kind: z.enum(['home', 'work', 'other']).optional(),
   name: z.string().max(80).nullable().optional(),

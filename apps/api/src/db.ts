@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS routines (
   PRIMARY KEY (user_id, origin_id, dest_id, day_type)
 );
 CREATE TABLE IF NOT EXISTS prefs (user_id TEXT PRIMARY KEY, weights TEXT NOT NULL, updates INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS privacy (user_id TEXT PRIMARY KEY, share_crowd INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS plans (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, created_at INTEGER NOT NULL, body TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS trips (
   id TEXT PRIMARY KEY, user_id TEXT NOT NULL, plan_id TEXT NOT NULL, route_index INTEGER NOT NULL,
@@ -180,6 +181,21 @@ export function savePrefs(userId: string, weights: PreferenceWeights, updates: n
     `INSERT INTO prefs (user_id, weights, updates) VALUES (?, ?, ?)
      ON CONFLICT(user_id) DO UPDATE SET weights = excluded.weights, updates = excluded.updates`,
   ).run(userId, JSON.stringify(weights), updates);
+}
+
+// ---------- privacidade ----------
+
+/** Opt-in para somar os tempos de trecho ao usuário agregado. Sem linha, vale "não". */
+export function getShareCrowd(userId: string): boolean {
+  const r = db.prepare('SELECT share_crowd FROM privacy WHERE user_id = ?').get(userId) as Row | undefined;
+  return Number(r?.share_crowd ?? 0) === 1;
+}
+
+export function setShareCrowd(userId: string, share: boolean): void {
+  db.prepare(
+    `INSERT INTO privacy (user_id, share_crowd, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT(user_id) DO UPDATE SET share_crowd = excluded.share_crowd, updated_at = excluded.updated_at`,
+  ).run(userId, share ? 1 : 0, Date.now());
 }
 
 // ---------- planos ----------

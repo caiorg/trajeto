@@ -24,6 +24,7 @@ import {
   getPrefs,
   getRoutines,
   getSamples,
+  getShareCrowd,
   insertSamples,
   loadStats,
   newPlace,
@@ -138,6 +139,8 @@ export function finishTrip(userId: string, tripId: string): FinishTripResponse {
   let anomalies = 0;
   let arrived = false;
   let places = getPlaces(userId);
+  // Sem opt-in, a viagem só alimenta o aprendizado do próprio usuário. O agregado continua sendo lido.
+  const shareCrowd = getShareCrowd(userId);
   const knownOrigin = matchPlace(places, first.lat, first.lon);
   const originPlace = placeFor(places, first.lat, first.lon);
 
@@ -171,7 +174,7 @@ export function finishTrip(userId: string, tripId: string): FinishTripResponse {
         actualTotalS: singleLeg && trace.reachedEnd && trace.coverage > 0.8 ? actualS : null,
       });
       saveStats(userId, res.user);
-      saveStats(CROWD, res.crowd);
+      if (shareCrowd) saveStats(CROWD, res.crowd);
       learnedSegments += res.learnedSegments;
       anomalies += res.anomalies.length;
       const ins = db.prepare('INSERT INTO anomalies (user_id, seg, at, expected_s, observed_s) VALUES (?, ?, ?, ?, ?)');
