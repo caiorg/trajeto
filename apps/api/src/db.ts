@@ -329,6 +329,8 @@ export function getSamples(tripId: string): TraceSample[] {
 
 /** Viagem ativa sem encerramento por mais que isso conta como abandonada. */
 const ABANDONED_TRIP_MS = 86_400_000;
+/** Folga para o relógio do aparelho adiantado. Amostra além disso no futuro não conta como atividade. */
+const CLOCK_SKEW_MS = 5 * 60_000;
 
 /**
  * Apaga o rastro GPS bruto e os planos (origem, destino e geometria) das viagens encerradas há mais
@@ -340,13 +342,15 @@ export function purgeExpiredTraces(retentionMs: number, now = Date.now()): { sam
   const cutoff = now - retentionMs;
   const abandonedCutoff = now - Math.max(retentionMs, ABANDONED_TRIP_MS);
   // Ativa: abandono conta da última atividade (início ou amostra mais recente), não da idade da viagem.
+  // Amostra com horário no futuro (relógio errado ou forjado) é ignorada, para não adiar o abandono.
   const expired = `SELECT id FROM trips WHERE (status != 'active' AND finished_at < ?)
-    OR (status = 'active' AND MAX(started_at, COALESCE((SELECT MAX(t) FROM samples WHERE trip_id = trips.id), 0)) < ?)`;
+    OR (status = 'active' AND MAX(started_at, COALESCE((SELECT MAX(t) FROM samples WHERE trip_id = trips.id AND t <= ?), 0)) < ?)`;
+  const latest = now + CLOCK_SKEW_MS;
   return transaction(() => {
-    const samples = db.prepare(`DELETE FROM samples WHERE trip_id IN (${expired})`).run(cutoff, abandonedCutoff);
+    const samples = db.prepare(`DELETE FROM samples WHERE trip_id IN (${expired})`).run(cutoff, latest, abandonedCutoff);
     const plans = db
       .prepare(`DELETE FROM plans WHERE created_at < ? AND id NOT IN (SELECT plan_id FROM trip_legs WHERE trip_id NOT IN (${expired}))`)
-      .run(cutoff, cutoff, abandonedCutoff);
+      .run(cutoff, cutoff, latest, abandonedCutoff);
     db.prepare('DELETE FROM alert_votes WHERE alert_id IN (SELECT id FROM alerts WHERE expires_at < ?)').run(cutoff);
     const alerts = db.prepare('DELETE FROM alerts WHERE expires_at < ?').run(cutoff);
     return { samples: Number(samples.changes), plans: Number(plans.changes), alerts: Number(alerts.changes) };

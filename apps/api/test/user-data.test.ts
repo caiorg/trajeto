@@ -80,6 +80,18 @@ describe('retenção dos rastros GPS', () => {
     expect(planExists(planId)).toBe(true);
   });
 
+  it('amostra com horário no futuro não adia o abandono', async () => {
+    const user = await register();
+    const { tripId } = await api.drive(user, false);
+    db.prepare('UPDATE trips SET started_at = started_at - ? WHERE id = ?').run(30 * HOUR_MS, tripId);
+    db.prepare('UPDATE samples SET t = t - ? WHERE trip_id = ?').run(30 * HOUR_MS, tripId);
+    const future = { t: Date.now() + 365 * DAY_MS, lat: -23.5, lon: -46.6 };
+    expect((await call(user, 'POST', `/trips/${tripId}/samples`, { samples: [future] })).status).toBe(200);
+
+    purgeExpiredTraces(DAY_MS);
+    expect(samplesOf(tripId)).toBe(0);
+  });
+
   it('apaga alertas e votos expirados há mais que o prazo', async () => {
     const reporter = await register();
     const voter = await register();
@@ -143,7 +155,8 @@ describe('dados do usuário', () => {
     hold = null;
     release();
 
-    expect((await pending).status).toBe(401);
+    // 409, não 401: com 401 o app registraria o aparelho e repetiria o pedido, gravando o plano.
+    expect((await pending).status).toBe(409);
     expect(count('SELECT COUNT(*) AS n FROM plans WHERE user_id = ?', user.userId)).toBe(0);
     // Pedido novo, depois da exclusão, grava normalmente.
     expect((await call(user, 'POST', '/plan', api.planRequest)).status).toBe(200);

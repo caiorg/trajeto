@@ -265,7 +265,7 @@ export function evaluatePlan(
     departures,
     learningLevel: conf < 0.05 ? 'nenhum' : conf < 0.3 ? 'inicial' : conf < 0.7 ? 'bom' : 'alto',
   };
-  // Usuário apagado durante o planejamento: o app registra o aparelho de novo e repete o pedido.
-  if (!savePlan(userId, result, ticket)) throw new HttpError(401, 'Dados do usuário apagados durante o planejamento');
+  // Usuário apagado durante o planejamento. 409, não 401: com 401 o app registraria o aparelho e repetiria o pedido.
+  if (!savePlan(userId, result, ticket)) throw new HttpError(409, 'Dados do usuário apagados durante o planejamento');
   return result;
 }
