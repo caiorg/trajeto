@@ -21,7 +21,8 @@ export function parsePendencias(prBody: string): Pendencia[] {
   const items: { head: string; body: string[] }[] = [];
   let current: { head: string; body: string[] } | null = null;
   for (const line of lines.slice(start + 1)) {
-    if (/^#{1,2}\s/.test(line)) break;
+    // Título de seção com até 1 espaço encerra; com 2 ou mais, a linha é corpo do item.
+    if (/^ ?#{1,2}\s/.test(line)) break;
     const item = /^[-*]\s+\[([ xX])\]\s+(.+)$/.exec(line);
     if (item) {
       current = item[1] === ' ' ? { head: item[2].trim(), body: [] } : null;
@@ -58,7 +59,7 @@ function dedent(lines: string[]): string {
 
 export const marker = (pr: number) => `<!-- pendencia-do-pr: ${pr} -->`;
 
-type Issue = { number: number; title: string; state: string; body: string | null; pull_request?: unknown };
+type Issue = { number: number; title: string; state: string; body: string | null; html_url: string; pull_request?: unknown };
 
 function github(token: string, repository: string, apiUrl: string) {
   const base = `${apiUrl}/repos/${repository}`;
@@ -95,9 +96,10 @@ function github(token: string, repository: string, apiUrl: string) {
 }
 
 // O sync do Linear cria o item em Backlog e sem prioridade; aqui ele vai para Todo com a prioridade do PR.
+// Item que já saiu desse estado (execução anterior ou mudança manual) não é alterado.
 async function updateLinear(apiKey: string, issueUrl: string, priority: Priority | null): Promise<string> {
   const gql = async <T>(query: string, variables: Record<string, unknown>): Promise<T> => {
-    const res = await fetch('https://api.linear.app/graphql', {
+    const res = await fetch(process.env.LINEAR_API_URL ?? 'https://api.linear.app/graphql', {
       method: 'POST',
       headers: { authorization: apiKey, 'content-type': 'application/json' },
       body: JSON.stringify({ query, variables }),
@@ -108,17 +110,26 @@ async function updateLinear(apiKey: string, issueUrl: string, priority: Priority
   };
   type Found = {
     attachmentsForURL: {
-      nodes: { issue: { id: string; identifier: string; team: { states: { nodes: { id: string }[] } } } | null }[];
+      nodes: {
+        issue: {
+          id: string;
+          identifier: string;
+          priority: number;
+          state: { type: string };
+          team: { states: { nodes: { id: string }[] } };
+        } | null;
+      }[];
     };
   };
   for (let attempt = 0; attempt < 12; attempt++) {
     const found = await gql<Found>(
-      `query($url: String!) { attachmentsForURL(url: $url) { nodes { issue { id identifier
+      `query($url: String!) { attachmentsForURL(url: $url) { nodes { issue { id identifier priority state { type }
         team { states(filter: { name: { eq: "Todo" } }) { nodes { id } } } } } } }`,
       { url: issueUrl },
     );
     const issue = found.attachmentsForURL.nodes.find((n) => n.issue)?.issue;
     if (issue) {
+      if (issue.state.type !== 'backlog' || issue.priority !== 0) return issue.identifier;
       const input: Record<string, unknown> = {};
       const stateId = issue.team.states.nodes[0]?.id;
       if (stateId) input.stateId = stateId;
@@ -160,48 +171,53 @@ async function main() {
     if (item.kind === 'comment') {
       const body = `${item.body}\n\nRegistrado no merge do #${pr.number}.\n${tag}`;
       const existing = await gh.comments(item.issue);
-      if (existing.some((c) => c.body === body)) continue;
-      await gh.comment(item.issue, body);
+      if (!existing.some((c) => c.body === body)) await gh.comment(item.issue, body);
       done.push(`- comentário em #${item.issue}`);
       continue;
     }
 
     const title = item.title.toLowerCase();
     const sameTitle = issues.filter((i) => i.title.toLowerCase() === title);
-    if (sameTitle.some((i) => i.body?.includes(tag))) continue; // já criada por uma execução anterior
-    const dup = sameTitle.find((i) => i.state === 'open');
-    if (dup) {
-      warnings.push(`- "${item.title}" já existe em #${dup.number}; não criei outra.`);
-      continue;
-    }
     const labels = item.labels.filter((l) => known.has(l));
     const unknown = item.labels.filter((l) => !known.has(l));
     if (unknown.length) warnings.push(`- "${item.title}": labels inexistentes ignoradas: ${unknown.join(', ')}.`);
-    const body = `${item.body}\n\n---\nRegistrada no merge do #${pr.number}.\n${tag}`;
-    const created = await gh.createIssue({ title: item.title, body, labels });
-    issues.push({ number: created.number, title: item.title, state: 'open', body });
+
+    // Numa reexecução, a issue já tem o marcador deste PR: não cria outra e só retoma o Linear.
+    let issue = sameTitle.find((i) => i.body?.includes(tag));
+    if (!issue) {
+      const dup = sameTitle.find((i) => i.state === 'open');
+      if (dup) {
+        warnings.push(`- "${item.title}" já existe em #${dup.number}; não criei outra.`);
+        continue;
+      }
+      const body = `${item.body}\n\n---\nRegistrada no merge do #${pr.number}.\n${tag}`;
+      const created = await gh.createIssue({ title: item.title, body, labels });
+      issue = { number: created.number, title: item.title, state: 'open', body, html_url: created.html_url };
+      issues.push(issue);
+    }
 
     let linear = '';
     if (linearKey) {
       try {
-        linear = ` (${await updateLinear(linearKey, created.html_url, item.priority)}, ${item.priority ?? 'sem prioridade'})`;
+        linear = ` (${await updateLinear(linearKey, issue.html_url, item.priority)}, ${item.priority ?? 'sem prioridade'})`;
       } catch (e) {
-        warnings.push(`- #${created.number}: não atualizei o Linear: ${(e as Error).message}.`);
+        warnings.push(`- #${issue.number}: não atualizei o Linear: ${(e as Error).message}.`);
       }
     } else if (item.priority) {
-      warnings.push(`- #${created.number}: sem \`LINEAR_API_KEY\`, a prioridade ${item.priority} não foi aplicada.`);
+      warnings.push(`- #${issue.number}: sem \`LINEAR_API_KEY\`, a prioridade ${item.priority} não foi aplicada.`);
     }
-    done.push(`- #${created.number} ${item.title}${linear}`);
+    done.push(`- #${issue.number} ${item.title}${linear}`);
   }
 
   if (!done.length && !warnings.length) return;
   const summary = [
     'Pendências registradas no merge:',
-    ...(done.length ? done : ['- nenhuma nova']),
+    ...(done.length ? done : ['- nenhuma']),
     ...(warnings.length ? ['', 'Avisos:', ...warnings] : []),
   ].join('\n');
   console.log(summary);
-  if (!done.length && (await gh.comments(pr.number)).some((c) => c.body?.startsWith(summary.split('\n')[0]))) return;
+  // O resumo é refeito a cada execução; só publica se o PR ainda não tiver um idêntico.
+  if ((await gh.comments(pr.number)).some((c) => c.body === summary)) return;
   await gh.comment(pr.number, summary);
 }
 

@@ -55,6 +55,12 @@ describe('parsePendencias', () => {
     expect(parsePendencias('## Pendências\n- [ ] #3\n')).toEqual([]);
   });
 
+  test('título de seção com 1 espaço de recuo encerra a seção', () => {
+    expect(parsePendencias(' ## Pendências\n- [ ] A | AFK\n  corpo\n ## Testes\n- [ ] B | AFK\n  corpo')).toEqual([
+      { kind: 'issue', title: 'A', labels: ['AFK'], priority: null, body: 'corpo' },
+    ]);
+  });
+
   test('linha sem indentação encerra o item', () => {
     expect(parsePendencias('## Pendências\n- [ ] Item | AFK\n  corpo\nTexto solto.\n  não entra')).toEqual([
       { kind: 'issue', title: 'Item', labels: ['AFK'], priority: null, body: 'corpo' },
