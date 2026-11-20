@@ -163,7 +163,22 @@ export function createNavigator(route: Route, opts: NavigatorOptions = {}) {
     return rest.offsetM < first.offsetM ? rest : first;
   };
 
-  return { update, project, totalM: total };
+  /**
+   * Último ponto da rota, a partir de `fromM`, a até `distM` de `p`, ou null se não houver. Com
+   * retorno ou volta pela mesma via, é a saída da última passagem perto de `p`.
+   */
+  const lastWithin = (p: LatLon, distM: number, fromM = 0): number | null => {
+    const pt: Coord = [p.lon, p.lat];
+    for (let j = coords.length - 2; j >= 0 && cum[j + 1]! >= fromM; j--) {
+      const q = projectOnPolyline(coords, cum, pt, j, j + 1);
+      if (q.offsetM > distM) continue;
+      const leave = Math.min(cum[j + 1]!, q.alongM + Math.sqrt(distM ** 2 - q.offsetM ** 2));
+      if (leave >= fromM) return leave;
+    }
+    return null;
+  };
+
+  return { update, project, lastWithin, totalM: total };
 }
 
 export type Navigator = ReturnType<typeof createNavigator>;
@@ -194,17 +209,15 @@ export const STOP_VISITED_RADIUS_M = 50;
 /** Distância máxima entre a parada e a rota para o avanço contar como passagem por ela. */
 export const STOP_ON_ROUTE_M = 150;
 
-export interface RouteProgress {
-  /** Avanço na rota em navegação (`NavState.alongM`). */
+export interface RouteProgress extends Pick<Navigator, 'project' | 'lastWithin'> {
+  /** Avanço na rota em navegação (`NavState.alongM`), medido no mesmo `Navigator`. */
   alongM: number;
-  /** Projeção na mesma rota a partir de `fromM` (`Navigator.project`). */
-  project: (p: LatLon, fromM?: number) => Pick<Projection, 'alongM' | 'offsetM'>;
 }
 
 /**
  * Marca como visitadas as paradas a menos de `radiusM` da posição. Com `progress`, também conta
  * como visitada a parada que a rota já deixou para trás (avanço além dela), o que cobre a última
- * parada pulada. Não vale para parada que a rota volta a cruzar. A rota passa pelas paradas na
+ * parada pulada. Se a rota volta à parada, conta a última passagem. A rota passa pelas paradas na
  * ordem do array, então as anteriores à última visitada também contam como visitadas (puladas).
  * Devolve o mesmo array se nada mudou.
  */
@@ -227,9 +240,9 @@ export function markVisitedStops(
     const p = progress.project(s, fromM);
     if (p.offsetM > STOP_ON_ROUTE_M) return;
     fromM = p.alongM;
-    // Se a rota volta a cruzar a parada, o avanço não diz qual passagem é a dela.
-    const crossesAgain = progress.project(s, p.alongM + 2 * STOP_ON_ROUTE_M).offsetM <= STOP_ON_ROUTE_M;
-    if (!crossesAgain && progress.alongM > p.alongM + radiusM) last = i;
+    // Conta a saída da última passagem perto da parada: com retorno, a rota ainda volta a ela.
+    const leaveM = progress.lastWithin(s, p.offsetM + radiusM, p.alongM);
+    if (leaveM !== null && progress.alongM > leaveM) last = i;
   });
   if (stops.every((s, i) => s.visited || i > last)) return stops;
   return stops.map((s, i) => (s.visited || i > last ? s : { ...s, visited: true }));
