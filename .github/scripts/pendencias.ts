@@ -16,12 +16,25 @@ const LINEAR_PRIORITY_NAME = ['sem prioridade', 'Urgent', 'High', 'Medium', 'Low
 
 export function parsePendencias(prBody: string): Pendencia[] {
   const lines = prBody.replace(/\r\n/g, '\n').replace(/<!--[\s\S]*?-->/g, '').split('\n');
-  const start = lines.findIndex((l) => /^##\s+pend[êe]ncias\s*$/i.test(l.trim()));
+  // Linhas dentro de blocos de código (``` ou ~~~) nunca são título nem item: o PR pode mostrar o formato como exemplo.
+  let fence = false;
+  const fenced = lines.map((l) => {
+    const isFence = /^\s*(```|~~~)/.test(l);
+    const inside = fence || isFence;
+    if (isFence) fence = !fence;
+    return inside;
+  });
+  const start = lines.findIndex((l, i) => !fenced[i] && /^##\s+pend[êe]ncias\s*$/i.test(l.trim()));
   if (start < 0) return [];
 
   const items: { head: string; body: string[] }[] = [];
   let current: { head: string; body: string[] } | null = null;
-  for (const line of lines.slice(start + 1)) {
+  for (const [i, line] of lines.entries()) {
+    if (i <= start) continue;
+    if (fenced[i]) {
+      if (current) current.body.push(line);
+      continue;
+    }
     // Título de seção com até 1 espaço encerra; com 2 ou mais, a linha é corpo do item.
     if (/^ ?#{1,2}\s/.test(line)) break;
     const item = /^[-*]\s+\[([ xX])\]\s+(.+)$/.exec(line);

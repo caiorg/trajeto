@@ -66,6 +66,13 @@ describe('parsePendencias', () => {
       { kind: 'issue', title: 'Item', labels: ['AFK'], priority: null, body: 'corpo' },
     ]);
   });
+
+  test('ignora a seção mostrada como exemplo em bloco de código', () => {
+    const pr = '## Resumo\n```\n## Pendências\n- [ ] Exemplo | AFK | Low\n  corpo\n```\n\n## Pendências\n- [ ] Real | AFK | Low\n  ~~~sh\n  ## não encerra\n  - [ ] não é item\n  ~~~\n';
+    expect(parsePendencias(pr)).toEqual([
+      { kind: 'issue', title: 'Real', labels: ['AFK'], priority: 'Low', body: '~~~sh\n## não encerra\n- [ ] não é item\n~~~' },
+    ]);
+  });
 });
 
 describe('itemMarker', () => {
