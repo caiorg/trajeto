@@ -36,6 +36,17 @@ function parseEnv<T extends z.ZodType>(schema: T): z.output<T> {
 const aiEnv = parseEnv(AiEnv);
 const suggestionEnv = parseEnv(SuggestionEnv);
 
+/** Vazio conta como ausente (padrão 24); zero explícito vale e apaga na próxima rodada. */
+const RetentionEnv = z.object({
+  GPS_RETENTION_HOURS: optionalText.transform((v) => (v === undefined ? 24 : Number(v))).pipe(z.number().finite().nonnegative()),
+});
+
+function parseGpsRetentionHours(): number {
+  const r = RetentionEnv.safeParse(env);
+  if (!r.success) throw new Error('Variável de ambiente inválida: GPS_RETENTION_HOURS (use um número de horas maior ou igual a zero)');
+  return r.data.GPS_RETENTION_HOURS;
+}
+
 export type AiProviderName = 'anthropic' | 'openai' | 'ollama' | 'openrouter' | 'none';
 
 const PROVIDERS: readonly AiProviderName[] = ['anthropic', 'openai', 'ollama', 'openrouter', 'none'];
@@ -79,7 +90,7 @@ export const config = {
     routeRadiusM: suggestionEnv.SUGGESTION_ROUTE_RADIUS_M ?? 250,
   },
   /** Horas que o rastro GPS de uma viagem encerrada fica no servidor. Ver docs/privacidade.md. */
-  gpsRetentionHours: Number(env.GPS_RETENTION_HOURS ?? 24),
+  gpsRetentionHours: parseGpsRetentionHours(),
   ai: {
     provider,
     model: aiEnv.AI_MODEL ?? (provider === 'anthropic' ? 'claude-opus-5-5' : null),
@@ -95,6 +106,3 @@ if ((provider === 'openai' || provider === 'ollama' || provider === 'openrouter'
   );
 }
 if (provider === 'openrouter' && !config.ai.apiKey) throw new Error('OPENROUTER_API_KEY é obrigatório para AI_PROVIDER=openrouter.');
-if (!Number.isFinite(config.gpsRetentionHours) || config.gpsRetentionHours < 0) {
-  throw new Error('GPS_RETENTION_HOURS deve ser um número de horas maior ou igual a zero.');
-}

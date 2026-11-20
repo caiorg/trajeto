@@ -59,7 +59,13 @@ export default function SettingsScreen() {
   };
 
   const test = async () => {
-    s.set({ apiUrl: normalizeApiUrl(url) });
+    const nextUrl = normalizeApiUrl(url);
+    // A confirmação vale para o servidor em que foi armada.
+    if (nextUrl !== normalizeApiUrl(s.apiUrl)) {
+      setDeleteState('idle');
+      setDeleteMsg(null);
+    }
+    s.set({ apiUrl: nextUrl });
     setStatus('Testando…');
     try {
       const h = await api.health();

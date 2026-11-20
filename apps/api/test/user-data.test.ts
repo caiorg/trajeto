@@ -7,7 +7,20 @@ const ROUTE = makeRoute();
 const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;
 
-vi.mock('../src/providers/routing', () => ({ valhalla: { name: 'test', route: async () => [structuredClone(ROUTE)] } }));
+/** Com `hold`, o roteador avisa que foi chamado e espera `release`: simula provedor lento. */
+let hold: { entered: () => void; release: Promise<void> } | null = null;
+vi.mock('../src/providers/routing', () => ({
+  valhalla: {
+    name: 'test',
+    route: async () => {
+      if (hold) {
+        hold.entered();
+        await hold.release;
+      }
+      return [structuredClone(ROUTE)];
+    },
+  },
+}));
 vi.mock('../src/providers/geo-services', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/providers/geo-services')>()),
   currentWeather: async () => null,
@@ -57,6 +70,16 @@ describe('retenção dos rastros GPS', () => {
     expect(samplesOf(tripId)).toBe(0);
   });
 
+  it('abandono conta da última amostra, não do início da viagem', async () => {
+    const { tripId, planId } = await api.drive(await register(), false);
+    // Viagem longa: começou há 30 horas e ainda manda pontos.
+    db.prepare('UPDATE trips SET started_at = ? WHERE id = ?').run(Date.now() - 30 * HOUR_MS, tripId);
+
+    purgeExpiredTraces(DAY_MS);
+    expect(samplesOf(tripId)).toBeGreaterThan(0);
+    expect(planExists(planId)).toBe(true);
+  });
+
   it('apaga alertas e votos expirados há mais que o prazo', async () => {
     const reporter = await register();
     const voter = await register();
@@ -103,6 +126,28 @@ describe('dados do usuário', () => {
     expect(tables.privacy).toEqual([expect.objectContaining({ share_crowd: 1 })]);
     expect(tables.devices).toEqual([{ created_at: expect.any(Number) }]);
     expect(JSON.stringify(res.body)).not.toContain(other.userId);
+  });
+
+  it('plano em andamento durante a exclusão não é gravado, mesmo se o aparelho voltar com o mesmo id', async () => {
+    const user = await register();
+    let release!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      hold = { entered: resolve, release: new Promise((r) => (release = r)) };
+    });
+    const pending = call(user, 'POST', '/plan', api.planRequest);
+    await entered;
+
+    expect((await call(user, 'DELETE', '/me')).status).toBe(200);
+    const again = await app.inject({ method: 'POST', url: '/auth/device', payload: { token: user.token, legacyUserId: user.userId } });
+    expect(again.json()).toEqual({ userId: user.userId });
+    hold = null;
+    release();
+
+    expect((await pending).status).toBe(401);
+    expect(count('SELECT COUNT(*) AS n FROM plans WHERE user_id = ?', user.userId)).toBe(0);
+    // Pedido novo, depois da exclusão, grava normalmente.
+    expect((await call(user, 'POST', '/plan', api.planRequest)).status).toBe(200);
+    expect(count('SELECT COUNT(*) AS n FROM plans WHERE user_id = ?', user.userId)).toBe(1);
   });
 
   it('apagar remove tudo do usuário, invalida o token e não mexe nos dados de outro', async () => {

@@ -275,12 +275,31 @@ export function setShareCrowd(userId: string, share: boolean): void {
 
 // ---------- planos ----------
 
-export function savePlan(userId: string, plan: PlanResponse): void {
+/**
+ * Última exclusão de cada usuário, só em memória, com um contador em vez de relógio para não depender
+ * da resolução de `Date.now()`. Basta durar mais que o pedido mais longo; não vai para o disco.
+ */
+const deletions = new Map<string, { seq: number; at: number }>();
+const DELETION_MEMORY_MS = 10 * 60_000;
+let deletionSeq = 0;
+
+/** Marca o início de um pedido que grava depois de esperar; passe o valor para `savePlan`. */
+export const deletionTicket = () => deletionSeq;
+
+/**
+ * Grava o plano, salvo se o usuário foi apagado (`DELETE /me`) depois de `ticket` (de `deletionTicket()`,
+ * pego no início do pedido). O planejamento espera os provedores; sem essa checagem, um pedido em curso
+ * recriaria origem, destino e rota depois da exclusão, mesmo que o aparelho se registre de novo com o mesmo id.
+ * Devolve se gravou.
+ */
+export function savePlan(userId: string, plan: PlanResponse, ticket: number): boolean {
+  if ((deletions.get(userId)?.seq ?? 0) > ticket) return false;
   db.prepare('INSERT INTO plans (id, user_id, created_at, body) VALUES (?, ?, ?, ?)').run(plan.planId, userId, plan.createdAt, JSON.stringify(plan));
   // Planos só servem para iniciar viagens; os de mais de 2 dias sem viagem podem sair.
   db.prepare(
     'DELETE FROM plans WHERE created_at < ? AND id NOT IN (SELECT plan_id FROM trip_legs)',
   ).run(Date.now() - 2 * 86_400_000);
+  return true;
 }
 
 export function getPlan(userId: string, planId: string): PlanResponse | null {
@@ -320,7 +339,9 @@ const ABANDONED_TRIP_MS = 86_400_000;
 export function purgeExpiredTraces(retentionMs: number, now = Date.now()): { samples: number; plans: number; alerts: number } {
   const cutoff = now - retentionMs;
   const abandonedCutoff = now - Math.max(retentionMs, ABANDONED_TRIP_MS);
-  const expired = `SELECT id FROM trips WHERE (status != 'active' AND finished_at < ?) OR (status = 'active' AND started_at < ?)`;
+  // Ativa: abandono conta da última atividade (início ou amostra mais recente), não da idade da viagem.
+  const expired = `SELECT id FROM trips WHERE (status != 'active' AND finished_at < ?)
+    OR (status = 'active' AND MAX(started_at, COALESCE((SELECT MAX(t) FROM samples WHERE trip_id = trips.id), 0)) < ?)`;
   return transaction(() => {
     const samples = db.prepare(`DELETE FROM samples WHERE trip_id IN (${expired})`).run(cutoff, abandonedCutoff);
     const plans = db
@@ -331,6 +352,7 @@ export function purgeExpiredTraces(retentionMs: number, now = Date.now()): { sam
     return { samples: Number(samples.changes), plans: Number(plans.changes), alerts: Number(alerts.changes) };
   });
 }
+
 
 const OWN_TRIPS = 'trip_id IN (SELECT id FROM trips WHERE user_id = ?)';
 
@@ -372,6 +394,9 @@ export function exportUserData(userId: string): UserDataExport {
  * Alertas que ele criou continuam para a comunidade, sem autor; os votos dele saem, e a contagem do alerta fica.
  */
 export function deleteUserData(userId: string): Record<string, number> {
+  const now = Date.now();
+  for (const [id, d] of deletions) if (d.at < now - DELETION_MEMORY_MS) deletions.delete(id);
+  deletions.set(userId, { seq: ++deletionSeq, at: now });
   return transaction(() => {
     const deleted: Record<string, number> = {};
     for (const t of USER_TABLES) {

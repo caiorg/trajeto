@@ -64,8 +64,8 @@ export function client(app: () => App, route: Route) {
     return { status: res.statusCode, body: res.json<T>(), headers: res.headers };
   }
 
-  const plan = async (user: User) =>
-    (await call<PlanResponse>(user, 'POST', '/plan', { origin: { lat: lat0, lon: lon0 }, destination: { lat: lat1, lon: lon1 }, timeZone: TZ })).body;
+  const planRequest = { origin: { lat: lat0, lon: lon0 }, destination: { lat: lat1, lon: lon1 }, timeZone: TZ };
+  const plan = async (user: User) => (await call<PlanResponse>(user, 'POST', '/plan', planRequest)).body;
 
   /** Planeja e inicia a viagem, envia o rastro com trânsito 1,8× o previsto e, se `finish`, encerra pela API. */
   async function drive(user: User, finish = true) {
@@ -78,5 +78,5 @@ export function client(app: () => App, route: Route) {
     return { planId: p.planId, tripId: trip.tripId, finished };
   }
 
-  return { register, call, plan, drive };
+  return { register, call, planRequest, plan, drive };
 }
