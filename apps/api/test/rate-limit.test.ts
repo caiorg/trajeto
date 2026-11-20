@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { buildApp } from '../src/app';
+import { ipKey } from '../src/rate-limit';
 import { client, makeRoute } from './helpers';
 
 type App = Awaited<ReturnType<typeof buildApp>>;
@@ -103,5 +104,20 @@ describe('limite de registro em POST /auth/device', () => {
     await expect(appWith({ TRUST_PROXY: 'true' })).rejects.toThrow(/TRUST_PROXY/);
     await expect(appWith({ TRUST_PROXY: '1' })).rejects.toThrow(/TRUST_PROXY/);
     await expect(appWith({ TRUST_PROXY: '10.0.0.0/99' })).rejects.toThrow(/TRUST_PROXY/);
+  });
+});
+
+describe('ipKey', () => {
+  it('reduz IPv4 mapeado ao IPv4 em qualquer grafia', () => {
+    for (const ip of ['::ffff:203.0.113.1', '::ffff:cb00:7101', '0:0:0:0:0:ffff:cb00:7101', '0000:0000:0000:0000:0000:ffff:203.0.113.1'])
+      expect(ipKey(ip), ip).toBe('203.0.113.1');
+    expect(ipKey('::ffff:cb00:7102')).toBe('203.0.113.2');
+  });
+
+  it('agrupa IPv6 nativo pelo /64 e mantém IPv4', () => {
+    expect(ipKey('2001:db8:1:2::1')).toBe('2001:db8:1:2::/64');
+    expect(ipKey('2001:0db8:0001:0002:ffff:0:0:9%eth0')).toBe('2001:db8:1:2::/64');
+    expect(ipKey('::1')).toBe('0:0:0:0::/64');
+    expect(ipKey('203.0.113.1')).toBe('203.0.113.1');
   });
 });

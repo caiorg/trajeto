@@ -5,19 +5,25 @@ import { isIPv6 } from 'node:net';
  * trocar de endereço dentro dele sem custo.
  */
 export function ipKey(ip: string): string {
-  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(ip);
-  if (mapped) return mapped[1]!;
   if (!isIPv6(ip)) return ip;
   const [head = '', tail = ''] = ip.split('%')[0]!.split('::');
-  const groups = (s: string) => (s ? s.split(':') : []);
-  // IPv4 embutido no fim ocupa dois grupos.
-  const width = (g: string[]) => g.reduce((n, x) => n + (x.includes('.') ? 2 : 1), 0);
+  // Grupos de 16 bits; o IPv4 embutido no fim (`::ffff:1.2.3.4`) vira dois.
+  const groups = (s: string) =>
+    (s ? s.split(':') : []).flatMap((g) => {
+      if (!g.includes('.')) return [parseInt(g, 16)];
+      const [a, b, c, d] = g.split('.').map(Number);
+      return [(a! << 8) | b!, (c! << 8) | d!];
+    });
   const h = groups(head);
   const t = groups(tail);
-  const full = [...h, ...Array<string>(8 - width(h) - width(t)).fill('0'), ...t];
+  const full = [...h, ...Array<number>(8 - h.length - t.length).fill(0), ...t];
+  // IPv4 mapeado (`::ffff:0:0/96`) em qualquer grafia conta como o IPv4.
+  if (full.slice(0, 5).every((g) => g === 0) && full[5] === 0xffff) {
+    return [full[6]! >> 8, full[6]! & 255, full[7]! >> 8, full[7]! & 255].join('.');
+  }
   return `${full
     .slice(0, 4)
-    .map((g) => parseInt(g, 16).toString(16))
+    .map((g) => g.toString(16))
     .join(':')}::/64`;
 }
 
