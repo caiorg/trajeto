@@ -84,8 +84,9 @@ function releaseKeepAwake() {
   queueKeepAwake(async () => {
     // Na web, desativar uma tag que não está ativa lança ERR_KEEP_AWAKE_TAG_INVALID.
     if (!keepAwakeActive) return;
-    keepAwakeActive = false;
+    // Só marca inativo após sucesso: se falhar, a próxima liberação tenta de novo.
     await deactivateKeepAwake(KEEP_AWAKE_TAG);
+    keepAwakeActive = false;
   });
 }
 

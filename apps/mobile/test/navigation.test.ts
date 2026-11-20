@@ -1,7 +1,7 @@
 import type { PlanResponse } from '@wayboo/core';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { startNavigation, stopNavigation } from '../src/lib/navigation';
+import { startNavigation, stopNavigation, useNavSession } from '../src/lib/navigation';
 
 // Imita o expo-keep-awake da web: desativar uma tag inativa lança erro.
 const active = new Set<string>();
@@ -95,9 +95,29 @@ describe('wake lock da navegação', () => {
   it('segue navegando quando o navegador recusa o wake lock', async () => {
     activate.mockRejectedValueOnce(new Error('NotAllowedError'));
     await startNavigation(plan, 0, true);
+    await settle();
+    expect(useNavSession.getState().status).toBe('navigating');
     await stopNavigation();
     await settle();
     expect(deactivate).not.toHaveBeenCalled();
+  });
+
+  it('tenta liberar de novo quando a desativação falha', async () => {
+    await startNavigation(plan, 0, true);
+    await settle();
+    deactivate.mockRejectedValueOnce(new Error('no activity'));
+    await stopNavigation();
+    await settle();
+    expect(active.size).toBe(1);
+    // O cleanup do próximo início tenta liberar de novo antes de ativar.
+    await startNavigation(plan, 0, true);
+    await settle();
+    expect(deactivate).toHaveBeenCalledTimes(2);
+    expect(activate).toHaveBeenCalledTimes(2);
+    await stopNavigation();
+    await settle();
+    expect(deactivate).toHaveBeenCalledTimes(3);
+    expect(active.size).toBe(0);
   });
 
   it('só ativa de novo depois que a desativação anterior termina', async () => {
