@@ -31,6 +31,8 @@ jobs:
 
       - run: bun run test
 
+      - run: bun test ./.github/scripts
+
       - name: Build web
         working-directory: apps/mobile
         run: bunx expo export --platform web
