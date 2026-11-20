@@ -23,6 +23,16 @@ bunx expo install --fix      # fix incompatible package versions
 
 Run lint and typecheck before declaring any task done.
 
+### Metro does not recompile? Check `CI`
+
+With `CI` set (`CI=1`, `CI=true`), Expo CLI starts Metro with file watching off and logs `Metro is running in CI mode, reloads are disabled`. Edits never reach the bundle, and only a restart picks them up. This is not specific to git worktrees: without `CI`, Metro in a worktree rebuilds on edits to `src/` and to `packages/core`.
+
+To check changes in a running dev server, start it without `CI`. It runs fine without a TTY:
+
+```bash
+env -u CI bunx expo start --web --port <port> < /dev/null
+```
+
 ## Navigation & Routing
 
 - Use **Expo Router** for all navigation. Routes live in `src/app/` — every file there is a screen, `_layout.tsx` files define navigators. Keep non-route code (components, hooks, utils) outside `src/app/`.
