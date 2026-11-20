@@ -42,15 +42,39 @@ function anthropicProvider(model: string): LlmProvider {
   };
 }
 
-/** OpenAI e qualquer servidor compatível (Ollama, vLLM, LM Studio) via `baseURL`. */
-function openAiCompatibleProvider(name: string, model: string, baseURL: string | undefined, apiKey: string | undefined): LlmProvider {
-  const client = new OpenAI({ apiKey, baseURL, timeout: config.ai.timeoutMs, maxRetries: 1 });
+type Fetch = typeof globalThis.fetch;
+
+interface OpenAiCompatibleOptions {
+  name: string;
+  model: string;
+  baseURL?: string;
+  apiKey?: string;
+  defaultHeaders?: Record<string, string>;
+  /** Campos do corpo fora do schema da OpenAI (ex.: `provider` do OpenRouter). */
+  extraBody?: Record<string, unknown>;
+  fetch?: Fetch;
+  /** Roda antes de cada chamada; lança para desistir sem gastar a requisição. */
+  preflight?: () => Promise<void>;
+}
+
+/** OpenAI e qualquer servidor compatível (Ollama, vLLM, LM Studio, OpenRouter) via `baseURL`. */
+function openAiCompatibleProvider(o: OpenAiCompatibleOptions): LlmProvider {
+  const client = new OpenAI({
+    apiKey: o.apiKey,
+    baseURL: o.baseURL,
+    defaultHeaders: o.defaultHeaders,
+    fetch: o.fetch,
+    timeout: config.ai.timeoutMs,
+    maxRetries: 1,
+  });
   return {
-    name,
-    model,
+    name: o.name,
+    model: o.model,
     async generateObject({ system, prompt, schema, schemaName }) {
+      await o.preflight?.();
       const res = await client.chat.completions.parse({
-        model,
+        ...o.extraBody,
+        model: o.model,
         messages: [
           { role: 'system', content: system },
           { role: 'user', content: prompt },
@@ -65,11 +89,61 @@ function openAiCompatibleProvider(name: string, model: string, baseURL: string |
   };
 }
 
+export const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
+
+/** Cabeçalhos opcionais de atribuição do app (https://openrouter.ai/docs/api-reference/overview). */
+const OPENROUTER_HEADERS = { 'HTTP-Referer': 'https://github.com/caiorg/wayboo', 'X-OpenRouter-Title': 'Wayboo' };
+
+/**
+ * Consulta `GET /models/{id}/endpoints`: o suporte a saída estruturada varia por endpoint (provedor) do modelo.
+ * Retorna `null` quando o catálogo não responde; aí a chamada segue e `require_parameters` decide.
+ */
+export async function openRouterStructuredOutputSupport(
+  model: string,
+  opts: { apiKey?: string; baseURL?: string; fetch?: Fetch } = {},
+): Promise<boolean | null> {
+  const { apiKey, baseURL = OPENROUTER_BASE_URL, fetch: fetchImpl = globalThis.fetch } = opts;
+  try {
+    const res = await fetchImpl(`${baseURL.replace(/\/$/, '')}/models/${model}/endpoints`, {
+      headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+      signal: AbortSignal.timeout(config.ai.timeoutMs),
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { data?: { endpoints?: { supported_parameters?: string[] }[] } };
+    const endpoints = body.data?.endpoints;
+    if (!Array.isArray(endpoints)) return null;
+    return endpoints.some((e) => e.supported_parameters?.includes('structured_outputs'));
+  } catch {
+    return null;
+  }
+}
+
+/** OpenRouter via API compatível com a OpenAI. Exportado para reuso com chave do usuário. */
+export function openRouterProvider(opts: { model: string; apiKey: string; baseURL?: string; fetch?: Fetch }): LlmProvider {
+  const { model, apiKey, baseURL = OPENROUTER_BASE_URL, fetch: fetchImpl = globalThis.fetch } = opts;
+  let support: Promise<boolean | null> | undefined;
+  return openAiCompatibleProvider({
+    name: 'openrouter',
+    model,
+    apiKey,
+    baseURL,
+    fetch: fetchImpl,
+    defaultHeaders: OPENROUTER_HEADERS,
+    // Sem isso o roteador pode mandar para um provedor que ignora `response_format`.
+    extraBody: { provider: { require_parameters: true } },
+    async preflight() {
+      support ??= openRouterStructuredOutputSupport(model, { apiKey, baseURL, fetch: fetchImpl });
+      if ((await support) === false) throw new AiError(`${model} não tem saída estruturada em nenhum provedor do OpenRouter`);
+    },
+  });
+}
+
 function create(): LlmProvider | null {
   const { provider, model, baseUrl, apiKey } = config.ai;
   if (provider === 'none' || !model) return null;
   if (provider === 'anthropic') return anthropicProvider(model);
-  return openAiCompatibleProvider(provider, model, baseUrl, apiKey);
+  if (provider === 'openrouter') return openRouterProvider({ model, apiKey: apiKey!, baseURL: baseUrl });
+  return openAiCompatibleProvider({ name: provider, model, baseURL: baseUrl, apiKey });
 }
 
 export const llm = create();
