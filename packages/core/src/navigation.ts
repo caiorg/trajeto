@@ -147,8 +147,20 @@ export function createNavigator(route: Route, opts: NavigatorOptions = {}) {
 
   /** Projeta um ponto na rota a partir de `fromM` (ex.: uma parada), sem mexer no estado da navegação. */
   const project = (p: LatLon, fromM = 0): Projection => {
-    const from = cum.findIndex((d) => d >= fromM);
-    return projectOnPolyline(coords, cum, [p.lon, p.lat], from < 0 ? coords.length - 1 : from);
+    const pt: Coord = [p.lon, p.lat];
+    if (fromM <= 0) return projectOnPolyline(coords, cum, pt);
+    const i = cum.findIndex((d) => d > fromM) - 1;
+    if (i < 0) return { index: coords.length - 1, point: coords[coords.length - 1]!, offsetM: Infinity, alongM: total };
+    // Trecho que contém `fromM`: vale só a parte depois dele (a distância no trecho é convexa).
+    let first = projectOnPolyline(coords, cum, pt, i, i + 1);
+    if (first.alongM < fromM) {
+      const [a, b] = [coords[i]!, coords[i + 1]!];
+      const f = (fromM - cum[i]!) / (cum[i + 1]! - cum[i]!);
+      const point: Coord = [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f];
+      first = { index: i, point, offsetM: haversine(pt, point), alongM: fromM };
+    }
+    const rest = projectOnPolyline(coords, cum, pt, i + 1);
+    return rest.offsetM < first.offsetM ? rest : first;
   };
 
   return { update, project, totalM: total };

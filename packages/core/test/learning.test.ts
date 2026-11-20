@@ -453,6 +453,19 @@ describe('navegação', () => {
     }
     expect(stops.map((s) => s.visited)).toEqual([false, false]);
   });
+
+  it('avanço marca duas paradas puladas no mesmo trecho longo', () => {
+    // Um único trecho de 2 km para leste, com A a 0,5 km e B a 1,5 km.
+    const [x0, y0] = HOME;
+    const east = 0.009813;
+    const geometry: Coord[] = [HOME, [x0 + 2 * east, y0]];
+    const nav = createNavigator({ ...makeRoute('r', HOME, WORK), geometry });
+    let stops: TripStop[] = [0.5, 1.5].map((km) => ({ lat: y0, lon: x0 + east * km, visited: false }));
+
+    const fix = { t: 0, lat: y0, lon: x0 + east * 1.8, accuracy: 5 };
+    stops = markVisitedStops(stops, fix, { alongM: nav.update(fix).alongM, project: nav.project });
+    expect(stops.map((s) => s.visited)).toEqual([true, true]);
+  });
 });
 
 function mulberry(seed: number) {
