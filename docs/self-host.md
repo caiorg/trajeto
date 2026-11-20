@@ -83,10 +83,10 @@ O serviço `api` lê o `.env` (`env_file`). Todas as variáveis da API são opci
 
 | Variável | Padrão | Efeito |
 | --- | --- | --- |
-| `GPS_RETENTION_HOURS` | `24` | Horas que o servidor guarda o rastro GPS, os planos e os alertas expirados. `0` apaga na próxima rodada de limpeza, que roda ao subir a API e a cada hora. Valor não numérico ou negativo impede a API de subir. O que cada tabela guarda está em [`docs/privacidade.md`](privacidade.md). |
+| `GPS_RETENTION_HOURS` | `24` | Horas que o servidor guarda o rastro GPS, os planos e os alertas expirados. Com `0`, a próxima rodada de limpeza, que roda ao subir a API e a cada hora, apaga o rastro das viagens encerradas. O rastro de uma viagem ativa fica enquanto ela enviar amostras e só sai depois de mais de 24 horas sem envio. Valor não numérico ou negativo impede a API de subir. O que cada tabela guarda está em [`docs/privacidade.md`](privacidade.md). |
 | `AI_PROVIDER` | detectado pela chave | `anthropic`, `openai`, `ollama`, `openrouter` ou `none`. Sem valor, a API usa o provedor da chave presente (`ANTHROPIC_API_KEY` ou `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, nessa ordem) e, sem chave, desliga a IA. |
 | `AI_MODEL` | `claude-opus-5-5` com `anthropic` | Obrigatório com `openai`, `ollama` e `openrouter`. |
-| `AI_BASE_URL` | `http://localhost:11434/v1` com `ollama`, `https://openrouter.ai/api/v1` com `openrouter` | Dentro do contêiner, `localhost` é o próprio contêiner. Para um Ollama na máquina, use `http://host.docker.internal:11434/v1`. |
+| `AI_BASE_URL` | `http://localhost:11434/v1` com `ollama`, `https://openrouter.ai/api/v1` com `openrouter` | Dentro do contêiner, `localhost` é o próprio contêiner. Para um Ollama na máquina, use `http://host.docker.internal:11434/v1` (no Linux, ver [Ollama na mesma máquina](#ollama-na-mesma-máquina)). |
 | `AI_TIMEOUT_MS` | `15000` | Tempo máximo de cada chamada ao modelo. |
 | `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `OLLAMA_API_KEY` | sem padrão (`OLLAMA_API_KEY`: `ollama`) | Chave do provedor. Uma chave remota faz a API chamar serviço externo (ver [O que ainda chama serviço externo](#o-que-ainda-chama-serviço-externo)). |
 | `SUGGESTION_ROUTE_MAX_AGE_MIN` | `1440` | Minutos em que `/suggestions` reaproveita a rota habitual guardada antes de pedir outra ao Valhalla. |
@@ -98,6 +98,19 @@ O serviço `api` lê o `.env` (`env_file`). Todas as variáveis da API são opci
 | `HOST` | `0.0.0.0` | Interface em que a API escuta. |
 
 O `docker-compose.yml` fixa `PORT`, `DB_PATH`, `VALHALLA_URL`, `PHOTON_URL`, `MAP_STYLE_URL` e `MAP_STYLE_DARK_URL`, porque o gateway e os volumes dependem delas. O valor dessas no `.env` não tem efeito. O serviço `map-assets` recebe só `PUBLIC_URL` e grava em `MAP_DIR` (padrão `/srv/map`, o volume `map`). Os padrões dessas variáveis, válidos para a API fora do Compose, estão no `.env.example`.
+
+### Ollama na mesma máquina
+
+O Docker Desktop cria `host.docker.internal`. O Docker Engine no Linux não cria, e o `docker-compose.yml` não define esse nome. No Linux, crie um `docker-compose.override.yml` na raiz (requer Docker Engine 20.10 ou mais novo):
+
+```yaml
+services:
+  api:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+```
+
+Por padrão, o Ollama escuta só em `127.0.0.1:11434`, que o contêiner não alcança no Linux. Defina `OLLAMA_HOST=0.0.0.0:11434` no serviço do Ollama. Isso abre a porta 11434 para a rede: restrinja o acesso a ela no firewall da máquina, porque o Ollama não pede autenticação.
 
 ## HTTPS
 
