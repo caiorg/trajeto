@@ -3,7 +3,7 @@ import { BINS_PER_DAY, localTime, type Coord, type Suggestion } from '@wayboo/co
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../src/app';
 import { config } from '../src/config';
-import { db, newPlace, saveRoutine, upsertPlace } from '../src/db';
+import { db, getRoutineRoutes, newPlace, saveRoutine, saveRoutineRoutes, upsertPlace } from '../src/db';
 
 const TZ = 'America/Sao_Paulo';
 /** Quarta-feira às 15h em `TZ`: os avanços de tempo dos testes não trocam o tipo de dia da rotina. */
@@ -147,6 +147,17 @@ describe('cache das sugestões de rotina', () => {
     vi.advanceTimersByTime(61_000);
     await (await commuter())();
     expect(count()).toBe(1);
+  });
+
+  it('apaga as rotas vencidas na leitura, mesmo sem gravar outra', () => {
+    config.suggestions.routeMaxAgeMs = 60_000;
+    db.exec('DELETE FROM routine_routes');
+    const from = { lat: HOME[1], lon: HOME[0] };
+    const to = { lat: WORK[1], lon: WORK[0] };
+    saveRoutineRoutes('u1', 'a', 'b', { from, to, fetchedAt: Date.now() - 61_000, routes: [] });
+    saveRoutineRoutes('u2', 'a', 'b', { from, to, fetchedAt: Date.now(), routes: [] });
+    expect(getRoutineRoutes('u3', 'a', 'b')).toBeNull();
+    expect(db.prepare('SELECT user_id FROM routine_routes').all()).toEqual([{ user_id: 'u2' }]);
   });
 
   it('chama o roteador de novo quando o usuário está longe da origem da rota guardada', async () => {

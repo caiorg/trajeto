@@ -192,6 +192,9 @@ export interface RoutineRoutes {
 }
 
 export function getRoutineRoutes(userId: string, originId: string, destId: string): RoutineRoutes | null {
+  // Passada a idade máxima a rota não é mais reaproveitada; não há motivo para guardar a localização.
+  // Roda a cada leitura, então a limpeza não depende de o roteador responder e uma rota nova ser gravada.
+  db.prepare('DELETE FROM routine_routes WHERE fetched_at < ?').run(Date.now() - config.suggestions.routeMaxAgeMs);
   const r = db.prepare('SELECT * FROM routine_routes WHERE user_id = ? AND origin_id = ? AND dest_id = ?').get(userId, originId, destId) as
     | Row
     | undefined;
@@ -210,8 +213,6 @@ export function saveRoutineRoutes(userId: string, originId: string, destId: stri
      ON CONFLICT(user_id, origin_id, dest_id) DO UPDATE SET from_lat = excluded.from_lat, from_lon = excluded.from_lon,
        to_lat = excluded.to_lat, to_lon = excluded.to_lon, fetched_at = excluded.fetched_at, routes = excluded.routes`,
   ).run(userId, originId, destId, v.from.lat, v.from.lon, v.to.lat, v.to.lon, v.fetchedAt, JSON.stringify(v.routes));
-  // Passada a idade máxima a rota não é mais reaproveitada; não há motivo para guardar a localização.
-  db.prepare('DELETE FROM routine_routes WHERE fetched_at < ?').run(Date.now() - config.suggestions.routeMaxAgeMs);
 }
 
 // ---------- preferências ----------
