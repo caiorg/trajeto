@@ -1,5 +1,6 @@
+import { useMemo } from 'react';
 import { useColorScheme } from 'react-native';
-import { useSettings } from './store';
+import { normalizeApiUrl, useSettings } from './store';
 
 export interface Theme {
   dark: boolean;
@@ -65,8 +66,16 @@ const dark: Theme = {
 export function useTheme(): Theme {
   const system = useColorScheme();
   const pref = useSettings((s) => s.theme);
+  const apiUrl = useSettings((s) => s.apiUrl);
+  const serverMap = useSettings((s) => s.serverMap);
   const isDark = pref === 'system' ? system === 'dark' : pref === 'dark';
-  return isDark ? dark : light;
+  // Memo: o tema entra em dependências de efeitos e memos do mapa.
+  return useMemo(() => {
+    const base = isDark ? dark : light;
+    // Estilo gravado de outro servidor não vale para o atual.
+    if (!serverMap || serverMap.apiUrl !== normalizeApiUrl(apiUrl)) return base;
+    return { ...base, mapStyle: isDark ? serverMap.dark : serverMap.light };
+  }, [isDark, apiUrl, serverMap]);
 }
 
 export const ALERT_COLORS: Record<string, string> = {

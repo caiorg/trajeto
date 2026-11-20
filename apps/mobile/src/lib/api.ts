@@ -121,8 +121,22 @@ async function request<T>(method: Method, path: string, body?: unknown, timeoutM
   }
 }
 
+export interface Health {
+  ok: boolean;
+  ai: { provider: string; model: string } | null;
+  /** Ausente em servidores anteriores ao self-host; `null` quando o servidor não serve mapa. */
+  map?: { light: string; dark: string } | null;
+}
+
 export const api = {
-  health: () => send<{ ok: boolean; ai: { provider: string; model: string } | null }>(currentUrl(), 'GET', '/health', undefined, 5000, null),
+  /** Também grava os estilos de mapa que o servidor anuncia; sem eles, o app usa os do OpenFreeMap. */
+  health: async () => {
+    const baseUrl = currentUrl();
+    const h = await send<Health>(baseUrl, 'GET', '/health', undefined, 5000, null);
+    // A URL pode ter mudado durante a chamada: a resposta só vale para o servidor que respondeu.
+    if (currentUrl() === baseUrl) useSettings.getState().set({ serverMap: h.map ? { apiUrl: baseUrl, ...h.map } : null });
+    return h;
+  },
   geocode: (q: string, near?: LatLon) =>
     request<{ results: GeocodeResult[] }>(
       'GET',

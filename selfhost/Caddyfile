@@ -1,0 +1,28 @@
+# Gateway do self-host (serviço `gateway` do docker-compose.yml).
+{
+	admin off
+}
+
+# `:80` serve HTTP. Um domínio (ex.: wayboo.example.com) ativa o HTTPS automático do Caddy.
+{$GATEWAY_ADDRESS::80} {
+	# Tiles do go-pmtiles: /tiles/region/{z}/{x}/{y}.mvt
+	handle_path /tiles/* {
+		header Access-Control-Allow-Origin *
+		reverse_proxy tiles:8080
+	}
+
+	# Estilos, fontes e sprites gerados pelo serviço map-assets.
+	handle /map/* {
+		header Access-Control-Allow-Origin *
+		header /map/styles/* Cache-Control "no-cache"
+		header /map/fonts/* Cache-Control "public, max-age=604800"
+		header /map/sprites/* Cache-Control "public, max-age=604800"
+		uri strip_prefix /map
+		root * /srv/map
+		file_server
+	}
+
+	handle {
+		reverse_proxy api:8787
+	}
+}

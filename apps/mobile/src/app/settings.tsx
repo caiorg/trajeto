@@ -69,7 +69,8 @@ export default function SettingsScreen() {
     setStatus('Testando…');
     try {
       const h = await api.health();
-      setStatus(h.ai ? `Conectado. IA: ${h.ai.provider} (${h.ai.model})` : 'Conectado. IA desativada: o copiloto usa regras.');
+      const ai = h.ai ? `IA: ${h.ai.provider} (${h.ai.model}).` : 'IA desativada: o copiloto usa regras.';
+      setStatus(`Conectado. ${ai} ${h.map ? 'Mapa do próprio servidor.' : 'Mapa público (OpenFreeMap).'}`);
       void loadPrivacy();
     } catch (e) {
       setStatus(e instanceof Error ? e.message : 'Falha');

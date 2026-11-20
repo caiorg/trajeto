@@ -96,7 +96,7 @@ export async function buildApp(opts: { logger?: boolean } = {}) {
     return reply.status(500).send({ error: 'Erro interno' });
   });
 
-  app.get('/health', async () => ({ ok: true, ai: llm ? { provider: llm.name, model: llm.model } : null }));
+  app.get('/health', async () => ({ ok: true, ai: llm ? { provider: llm.name, model: llm.model } : null, map: config.mapStyles }));
 
   app.post('/auth/device', async (req) => {
     const b = z.object({ token: z.string().regex(TOKEN), legacyUserId: z.string().uuid().optional() }).parse(req.body ?? {});
