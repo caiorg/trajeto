@@ -157,11 +157,14 @@ async function updateLinear(apiKey: string, issueUrl: string, priority: Priority
       if (!stateId) throw new Error('o time do item no Linear não tem o estado Todo');
       const input: Record<string, unknown> = { stateId };
       if (priority) input.priority = LINEAR_PRIORITY[priority];
-      await gql(`mutation($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success } }`, {
-        id: issue.id,
-        input,
-      });
-      return `${issue.identifier}, ${priority ?? LINEAR_PRIORITY_NAME[0]}`;
+      type Updated = { issueUpdate: { success: boolean; issue: { priority: number } | null } };
+      const { issueUpdate } = await gql<Updated>(
+        `mutation($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success issue { priority } } }`,
+        { id: issue.id, input },
+      );
+      if (!issueUpdate.success || !issueUpdate.issue) throw new Error('o Linear recusou a atualização');
+      // Mostra a prioridade que o Linear devolveu, não a pedida.
+      return `${issue.identifier}, ${LINEAR_PRIORITY_NAME[issueUpdate.issue.priority] ?? issueUpdate.issue.priority}`;
     }
     await Bun.sleep(5000);
   }
