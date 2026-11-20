@@ -61,6 +61,34 @@ let flushTimer: ReturnType<typeof setInterval> | null = null;
 let buffer: TraceSample[] = [];
 let lastRerouteAt = 0;
 let finishing = false;
+let keepAwakeActive = false;
+let keepAwakeQueue: Promise<void> = Promise.resolve();
+
+/**
+ * Serializa ativar e desativar o wake lock: parar antes de a ativação terminar não deixa a tela presa acesa.
+ * Falhas são ignoradas (web sem a API, HTTP fora de localhost, aba oculta): a navegação segue e só a tela pode apagar.
+ */
+function queueKeepAwake(op: () => Promise<void>) {
+  keepAwakeQueue = keepAwakeQueue.then(op).catch(() => {});
+}
+
+function acquireKeepAwake() {
+  queueKeepAwake(async () => {
+    if (keepAwakeActive) return;
+    await activateKeepAwakeAsync(KEEP_AWAKE_TAG);
+    keepAwakeActive = true;
+  });
+}
+
+function releaseKeepAwake() {
+  queueKeepAwake(async () => {
+    // Na web, desativar uma tag que não está ativa lança ERR_KEEP_AWAKE_TAG_INVALID.
+    if (!keepAwakeActive) return;
+    // Só marca inativo após sucesso: se falhar, a próxima liberação tenta de novo.
+    await deactivateKeepAwake(KEEP_AWAKE_TAG);
+    keepAwakeActive = false;
+  });
+}
 
 function speak(text: string) {
   const { voice } = useSettings.getState();
@@ -91,7 +119,7 @@ function cleanup() {
   flushTimer = null;
   navigator = null;
   Speech.stop();
-  void deactivateKeepAwake(KEEP_AWAKE_TAG);
+  releaseKeepAwake();
 }
 
 async function reroute(fix: NavFix) {
@@ -146,7 +174,7 @@ export async function startNavigation(plan: PlanResponse, routeIndex: number, si
     result: null,
     error: null,
   });
-  void activateKeepAwakeAsync(KEEP_AWAKE_TAG);
+  acquireKeepAwake();
 
   if (simulate) {
     // Simulação não grava viagem: o tempo é acelerado e ensinaria durações falsas ao modelo.
