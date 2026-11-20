@@ -145,8 +145,11 @@ export function createNavigator(route: Route, opts: NavigatorOptions = {}) {
     };
   }
 
-  /** Projeta um ponto na rota inteira (ex.: uma parada), sem mexer no estado da navegação. */
-  const project = (p: LatLon): Projection => projectOnPolyline(coords, cum, [p.lon, p.lat]);
+  /** Projeta um ponto na rota a partir de `fromM` (ex.: uma parada), sem mexer no estado da navegação. */
+  const project = (p: LatLon, fromM = 0): Projection => {
+    const from = cum.findIndex((d) => d >= fromM);
+    return projectOnPolyline(coords, cum, [p.lon, p.lat], from < 0 ? coords.length - 1 : from);
+  };
 
   return { update, project, totalM: total };
 }
@@ -179,19 +182,20 @@ export const STOP_VISITED_RADIUS_M = 50;
 /** Distância máxima entre a parada e a rota para o avanço contar como passagem por ela. */
 export const STOP_ON_ROUTE_M = 150;
 
-/**
- * Marca como visitadas as paradas a menos de `radiusM` da posição. Com `progress`, também conta
- * como visitada a parada que a rota já deixou para trás (avanço além dela), o que cobre a última
- * parada pulada. A rota passa pelas paradas na ordem do array, então as anteriores à última
- * visitada também contam como visitadas (puladas). Devolve o mesmo array se nada mudou.
- */
 export interface RouteProgress {
   /** Avanço na rota em navegação (`NavState.alongM`). */
   alongM: number;
-  /** Projeção na mesma rota (`Navigator.project`). */
-  project: (p: LatLon) => Pick<Projection, 'alongM' | 'offsetM'>;
+  /** Projeção na mesma rota a partir de `fromM` (`Navigator.project`). */
+  project: (p: LatLon, fromM?: number) => Pick<Projection, 'alongM' | 'offsetM'>;
 }
 
+/**
+ * Marca como visitadas as paradas a menos de `radiusM` da posição. Com `progress`, também conta
+ * como visitada a parada que a rota já deixou para trás (avanço além dela), o que cobre a última
+ * parada pulada. Não vale para parada que a rota volta a cruzar. A rota passa pelas paradas na
+ * ordem do array, então as anteriores à última visitada também contam como visitadas (puladas).
+ * Devolve o mesmo array se nada mudou.
+ */
 export function markVisitedStops(
   stops: TripStop[],
   fix: Pick<NavFix, 'lat' | 'lon'>,
@@ -199,13 +203,21 @@ export function markVisitedStops(
   radiusM = STOP_VISITED_RADIUS_M,
 ): TripStop[] {
   let last = -1;
-  const passed = (s: TripStop) => {
-    if (!progress) return false;
-    const p = progress.project(s);
-    return p.offsetM <= STOP_ON_ROUTE_M && progress.alongM > p.alongM + radiusM;
-  };
+  // Cada parada pendente é procurada na rota depois da anterior, na ordem do array.
+  let fromM = 0;
   stops.forEach((s, i) => {
-    if (s.visited || haversine([s.lon, s.lat], [fix.lon, fix.lat]) <= radiusM || passed(s)) last = i;
+    if (s.visited) {
+      last = i;
+      return;
+    }
+    if (haversine([s.lon, s.lat], [fix.lon, fix.lat]) <= radiusM) last = i;
+    if (!progress) return;
+    const p = progress.project(s, fromM);
+    if (p.offsetM > STOP_ON_ROUTE_M) return;
+    fromM = p.alongM;
+    // Se a rota volta a cruzar a parada, o avanço não diz qual passagem é a dela.
+    const crossesAgain = progress.project(s, p.alongM + 2 * STOP_ON_ROUTE_M).offsetM <= STOP_ON_ROUTE_M;
+    if (!crossesAgain && progress.alongM > p.alongM + radiusM) last = i;
   });
   if (stops.every((s, i) => s.visited || i > last)) return stops;
   return stops.map((s, i) => (s.visited || i > last ? s : { ...s, visited: true }));

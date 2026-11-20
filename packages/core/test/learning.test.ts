@@ -431,6 +431,28 @@ describe('navegação', () => {
     stops = markVisitedStops(stops, offRoute, { alongM: nav.update(offRoute).alongM, project: nav.project });
     expect(rerouteRequest(plan, offRoute, stops, opts).waypoints).toEqual([]);
   });
+
+  it('avanço não marca parada cuja posição a rota cruza antes da passagem dela', () => {
+    // Vai 2 km para leste até A, volta 1 km até B (cruzada na ida) e segue 1 km para o norte.
+    const [x0, y0] = HOME;
+    const east = 0.009813;
+    const north = 0.008993;
+    const geometry: Coord[] = [];
+    for (let i = 0; i <= 40; i++) geometry.push([x0 + (east * 2 * i) / 40, y0]);
+    for (let i = 1; i <= 20; i++) geometry.push([x0 + east * (2 - i / 20), y0]);
+    for (let i = 1; i <= 20; i++) geometry.push([x0 + east, y0 + (north * i) / 20]);
+    const nav = createNavigator({ ...makeRoute('r', HOME, WORK), geometry });
+    const a = { lat: y0, lon: x0 + 2 * east };
+    const b = { lat: y0, lon: x0 + east };
+    let stops: TripStop[] = [a, b].map((p) => ({ ...p, visited: false }));
+
+    // Na ida, uma falha de GPS pula de 200 m antes de B para 150 m depois dele.
+    for (const [i, km] of [0, 0.2, 0.4, 0.6, 0.8, 1.15].entries()) {
+      const fix = { t: i * 5000, lat: y0, lon: x0 + east * km, accuracy: 5 };
+      stops = markVisitedStops(stops, fix, { alongM: nav.update(fix).alongM, project: nav.project });
+    }
+    expect(stops.map((s) => s.visited)).toEqual([false, false]);
+  });
 });
 
 function mulberry(seed: number) {
