@@ -83,6 +83,12 @@ function serial<T>(fn: () => Promise<T>): Promise<T> {
   return next;
 }
 
+let lastSave: Promise<void> = Promise.resolve();
+/** Termina quando a última gravação pedida chega ao AsyncStorage; rejeita se ela falhou. */
+export function settingsSaved(): Promise<void> {
+  return lastSave;
+}
+
 async function writeSettings(name: string, value: Persisted): Promise<void> {
   const state = secureTokens ? { ...value.state, credentials: await moveTokensToSecureStore(value.state.credentials ?? {}) } : value.state;
   await AsyncStorage.setItem(name, JSON.stringify({ ...value, state }));
@@ -123,7 +129,11 @@ const settingsStorage: PersistStorage<Settings> = {
     }),
   // Antes da hidratação, ou se ela falhou, o estado em memória é o padrão (outro `userId`, sem credenciais):
   // gravá-lo apagaria a identidade salva. O zustand não grava ao aplicar o estado lido.
-  setItem: (name, value) => (useSettings.persist.hasHydrated() ? serial(() => writeSettings(name, value)) : Promise.resolve()),
+  setItem: (name, value) => {
+    if (!useSettings.persist.hasHydrated()) return Promise.resolve();
+    lastSave = serial(() => writeSettings(name, value));
+    return lastSave;
+  },
   removeItem: (name) =>
     serial(async () => {
       await AsyncStorage.removeItem(name);
@@ -166,8 +176,10 @@ interface Settings {
   theme: ThemePref;
   avoidTolls: boolean;
   avoidHighways: boolean;
-  set: (patch: Partial<Omit<Settings, 'set' | 'setCredential' | 'userId' | 'credentials'>>) => void;
+  set: (patch: Partial<Omit<Settings, 'set' | 'setCredential' | 'resetIdentity' | 'userId' | 'credentials'>>) => void;
   setCredential: (apiUrl: string, credential: DeviceCredential) => void;
+  /** Depois de apagar os dados: descarta a credencial de `apiUrl` e gera outro `userId`, que o servidor adota como usuário novo. */
+  resetIdentity: (apiUrl: string) => void;
 }
 
 /** Resolve com o erro da leitura do AsyncStorage (ou `null`) quando a hidratação termina. */
@@ -190,6 +202,11 @@ export const useSettings = create<Settings>()(
       set: (patch) => set(patch),
       setCredential: (apiUrl, credential) =>
         set((s) => ({ credentials: { ...s.credentials, [normalizeApiUrl(apiUrl)]: credential } })),
+      resetIdentity: (apiUrl) =>
+        set((s) => {
+          const { [normalizeApiUrl(apiUrl)]: _discarded, ...credentials } = s.credentials;
+          return { userId: randomUUID(), credentials };
+        }),
     }),
     {
       name: 'wayboo-settings',

@@ -12,7 +12,7 @@ import type {
   TraceSample,
 } from '@wayboo/core';
 import { getRandomBytes } from 'expo-crypto';
-import { normalizeApiUrl, settingsHydration, timeZone, useSettings } from './store';
+import { normalizeApiUrl, settingsHydration, settingsSaved, timeZone, useSettings } from './store';
 
 export interface GeocodeResult {
   name: string;
@@ -30,6 +30,9 @@ export class ApiError extends Error {
     super(message);
   }
 }
+
+/** O servidor já apagou os dados, mas o aparelho não salvou a identidade nova. Não repetir o `DELETE /me`. */
+export class LocalSaveError extends Error {}
 
 type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
@@ -81,8 +84,14 @@ function newToken(): string {
   return out;
 }
 
-/** Um registro em andamento por servidor; nunca compartilhado entre URLs. */
-const registering = new Map<string, Promise<string>>();
+/** A identidade em que a chamada começou foi descartada por `deleteMyData`. */
+const identityReset = () => new ApiError(0, 'Os dados deste aparelho foram apagados durante a chamada. Tente de novo.');
+
+/**
+ * Um registro em andamento por servidor; nunca compartilhado entre URLs. `userId` é o id local
+ * quando o registro começou: depois de `resetIdentity`, o registro antigo não vale mais.
+ */
+const registering = new Map<string, { userId: string; token: Promise<string> }>();
 
 /**
  * Token deste aparelho para `baseUrl`. Sem registro confirmado, grava um token novo (ou reusa o
@@ -93,31 +102,46 @@ async function deviceToken(baseUrl: string): Promise<string> {
   await hydrated();
   const saved = useSettings.getState().credentials[baseUrl];
   if (saved?.userId) return saved.token;
-  let pending = registering.get(baseUrl);
-  if (!pending) {
-    const token = saved?.token ?? newToken();
-    if (!saved) useSettings.getState().setCredential(baseUrl, { token });
-    pending = send<{ userId: string }>(baseUrl, 'POST', '/auth/device', { token, legacyUserId: useSettings.getState().userId }, 15000, null)
+  const localId = useSettings.getState().userId;
+  const pending = registering.get(baseUrl);
+  if (pending?.userId === localId) return pending.token;
+  const token = saved?.token ?? newToken();
+  if (!saved) useSettings.getState().setCredential(baseUrl, { token });
+  const entry = {
+    userId: localId,
+    token: send<{ userId: string }>(baseUrl, 'POST', '/auth/device', { token, legacyUserId: localId }, 15000, null)
       .then(({ userId }) => {
+        // Resposta que chega depois de apagar os dados: o token descartado não grava nem é usado.
+        if (useSettings.getState().userId !== localId) throw identityReset();
         useSettings.getState().setCredential(baseUrl, { token, userId });
         return token;
       })
-      .finally(() => registering.delete(baseUrl));
-    registering.set(baseUrl, pending);
-  }
-  return pending;
+      .finally(() => {
+        if (registering.get(baseUrl) === entry) registering.delete(baseUrl);
+      }),
+  };
+  registering.set(baseUrl, entry);
+  return entry.token;
 }
 
 async function request<T>(method: Method, path: string, body?: unknown, timeoutMs = 25000): Promise<T> {
   const baseUrl = currentUrl();
+  await hydrated();
+  // Antes da hidratação, o `userId` em memória é o padrão; por isso a leitura vem depois dela.
+  const localId = useSettings.getState().userId;
   const token = await deviceToken(baseUrl);
+  if (useSettings.getState().userId !== localId) throw identityReset();
   try {
     return await send<T>(baseUrl, method, path, body, timeoutMs, token);
   } catch (e) {
     // Token recusado (banco do servidor recriado, por exemplo): registra o mesmo token de novo, uma vez.
     if (!(e instanceof ApiError) || e.status !== 401) throw e;
     if (useSettings.getState().credentials[baseUrl]?.token === token) useSettings.getState().setCredential(baseUrl, { token });
-    return send<T>(baseUrl, method, path, body, timeoutMs, await deviceToken(baseUrl));
+    const retryToken = await deviceToken(baseUrl);
+    // Depois de apagar os dados, a operação da identidade antiga não vai para a nova. Testa depois
+    // de obter o token: o reset pode acontecer enquanto `deviceToken` espera.
+    if (useSettings.getState().userId !== localId) throw identityReset();
+    return send<T>(baseUrl, method, path, body, timeoutMs, retryToken);
   }
 }
 
@@ -162,8 +186,17 @@ export const api = {
   narrative: () => request<{ text: string | null; provider: string }>('POST', '/insights/narrative', {}, 40000),
   privacy: () => request<Privacy>('GET', '/privacy'),
   setPrivacy: (p: Privacy) => request<Privacy>('PUT', '/privacy', p),
-  /** Apaga tudo deste usuário no servidor. O token deixa de valer; a próxima chamada registra o aparelho de novo, sem dados. */
-  deleteMyData: () => request<{ deleted: Record<string, number> }>('DELETE', '/me'),
+  /** Apaga tudo deste usuário no servidor. O aparelho troca de token e de id; a próxima chamada registra um usuário novo. */
+  deleteMyData: async () => {
+    const baseUrl = currentUrl();
+    const res = await request<{ deleted: Record<string, number> }>('DELETE', '/me');
+    useSettings.getState().resetIdentity(baseUrl);
+    // Sem esperar, fechar o app agora restauraria o id antigo, e o servidor o adotaria de novo.
+    await settingsSaved().catch(() => {
+      throw new LocalSaveError('Dados apagados no servidor, mas não foi possível salvar o novo identificador neste aparelho.');
+    });
+    return res;
+  },
   updatePlace: (id: string, patch: { kind?: 'home' | 'work' | 'other'; name?: string | null }) =>
     request<unknown>('PATCH', `/places/${id}`, patch),
 };
