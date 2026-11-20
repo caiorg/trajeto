@@ -3,7 +3,13 @@ import { BINS_PER_DAY, localTime, type Coord, type Suggestion } from '@wayboo/co
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../src/app';
 import { config } from '../src/config';
-import { db, getRoutineRoutes, newPlace, saveRoutine, saveRoutineRoutes, upsertPlace } from '../src/db';
+import { db, getPlaces, getRoutineRoutes, newPlace, saveRoutine, saveRoutineRoutes, upsertPlace } from '../src/db';
+
+// Espião em `getPlaces` para saber quando um pedido de `/suggestions` chegou a `routinePlan` (ver `concurrently`).
+vi.mock('../src/db', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/db')>();
+  return { ...actual, getPlaces: vi.fn(actual.getPlaces) };
+});
 
 const TZ = 'America/Sao_Paulo';
 /** Quarta-feira às 15h em `TZ`: os avanços de tempo dos testes não trocam o tipo de dia da rotina. */
@@ -70,11 +76,12 @@ function holdRouter() {
 async function concurrently<T>(open: () => Promise<T>) {
   const release = holdRouter();
   let finished = 0;
+  const placesBefore = vi.mocked(getPlaces).mock.calls.length;
   const track = (p: Promise<T>) => p.finally(() => finished++);
   const both = Promise.all([track(open()), track(open())] as const);
-  await vi.waitFor(() => expect(routerCalls).toHaveBeenCalledTimes(1));
-  // Dá tempo ao segundo pedido de chegar até o roteador, se fosse chamá-lo.
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  // `suggestions` lê os lugares e chega à checagem do mapa em `routinePlan` sem nenhum `await` no meio, e o
+  // roteador é chamado no mesmo passo. Com duas leituras, os dois pedidos já passaram por ali.
+  await vi.waitFor(() => expect(vi.mocked(getPlaces).mock.calls.length - placesBefore).toBe(2));
   expect(routerCalls).toHaveBeenCalledTimes(1);
   expect(finished).toBe(0);
   release();
