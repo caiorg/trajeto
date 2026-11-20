@@ -65,7 +65,21 @@ export const marker = (pr: number) => `<!-- pendencia-do-pr: ${pr} -->`;
 export const itemMarker = (pr: number, title: string) =>
   `<!-- pendencia-do-pr: ${pr} item: ${new Bun.CryptoHasher('sha256').update(title.trim().toLowerCase()).digest('hex').slice(0, 16)} -->`;
 
-type Issue = { number: number; title: string; state: string; body: string | null; html_url: string; pull_request?: unknown };
+type Issue = {
+  number: number;
+  title: string;
+  state: string;
+  body: string | null;
+  html_url: string;
+  user: { login: string } | null;
+  pull_request?: unknown;
+};
+type Comment = { body: string | null; user: { login: string } | null };
+
+// Marcadores ficam em texto editável. Só valem em issues e comentários criados por este workflow,
+// para que ninguém consiga plantar um marcador e desviar a deduplicação ou o update do Linear.
+const BOT = 'github-actions[bot]';
+const byBot = (x: { user: { login: string } | null }) => x.user?.login === BOT;
 
 function github(token: string, repository: string, apiUrl: string) {
   const base = `${apiUrl}/repos/${repository}`;
@@ -94,7 +108,7 @@ function github(token: string, repository: string, apiUrl: string) {
   return {
     labels: async () => (await all<{ name: string }>('/labels')).map((l) => l.name),
     issues: async () => (await all<Issue>('/issues?state=all')).filter((i) => !i.pull_request),
-    comments: (n: number) => all<{ body: string | null }>(`/issues/${n}/comments`),
+    comments: (n: number) => all<Comment>(`/issues/${n}/comments`),
     createIssue: (data: { title: string; body: string; labels: string[] }) =>
       post<{ number: number; html_url: string }>('/issues', data),
     comment: (n: number, body: string) => post<unknown>(`/issues/${n}/comments`, { body }),
@@ -180,7 +194,7 @@ async function main() {
     if (item.kind === 'comment') {
       const body = `${item.body}\n\nRegistrado no merge do #${pr.number}.\n${tag}`;
       const existing = await gh.comments(item.issue);
-      if (!existing.some((c) => c.body === body)) await gh.comment(item.issue, body);
+      if (!existing.some((c) => byBot(c) && c.body === body)) await gh.comment(item.issue, body);
       done.push(`- comentário em #${item.issue}`);
       continue;
     }
@@ -193,7 +207,7 @@ async function main() {
 
     // Numa reexecução, a issue já tem o marcador deste PR: não cria outra e só retoma o Linear.
     const itemTag = itemMarker(pr.number, item.title);
-    let issue = issues.find((i) => i.body?.includes(itemTag));
+    let issue = issues.find((i) => byBot(i) && i.body?.includes(itemTag));
     if (!issue) {
       const dup = sameTitle.find((i) => i.state === 'open');
       if (dup) {
@@ -202,7 +216,7 @@ async function main() {
       }
       const body = `${item.body}\n\n---\nRegistrada no merge do #${pr.number}.\n${itemTag}`;
       const created = await gh.createIssue({ title: item.title, body, labels });
-      issue = { number: created.number, title: item.title, state: 'open', body, html_url: created.html_url };
+      issue = { number: created.number, title: item.title, state: 'open', body, html_url: created.html_url, user: { login: BOT } };
       issues.push(issue);
     }
 
@@ -227,7 +241,7 @@ async function main() {
   ].join('\n');
   console.log(summary);
   // O resumo é refeito a cada execução; só publica se o PR ainda não tiver um idêntico.
-  if ((await gh.comments(pr.number)).some((c) => c.body === summary)) return;
+  if ((await gh.comments(pr.number)).some((c) => byBot(c) && c.body === summary)) return;
   await gh.comment(pr.number, summary);
 }
 
