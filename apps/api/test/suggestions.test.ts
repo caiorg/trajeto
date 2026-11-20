@@ -53,6 +53,8 @@ const VALHALLA = {
 };
 
 const routerCalls = vi.fn();
+/** Status HTTP que o roteador devolve; 200 responde a rota. */
+let routerStatus = 200;
 const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
 
 let app: Awaited<ReturnType<typeof buildApp>>;
@@ -64,13 +66,14 @@ afterAll(() => app.close());
 const defaults = { ...config.suggestions };
 beforeEach(() => {
   routerCalls.mockClear();
+  routerStatus = 200;
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: string | URL | Request) => {
       const url = String(input instanceof Request ? input.url : input);
       if (url.startsWith(`${config.valhallaUrl}/route`)) {
         routerCalls(url);
-        return json(VALHALLA);
+        return routerStatus === 200 ? json(VALHALLA) : new Response('falhou', { status: routerStatus });
       }
       if (url.startsWith(config.openMeteoUrl)) return json({ current: { precipitation: 0, weather_code: 0, visibility: 10000 } });
       throw new Error(`fetch inesperado: ${url}`);
@@ -93,15 +96,18 @@ async function commuter() {
   upsertPlace(userId, work);
   const now = Date.now();
   saveRoutine(userId, { originId: home.id, destId: work.id, dayType: localTime(now, TZ).dayType, hist: Array(BINS_PER_DAY).fill(1), t: now });
-  return async (here: Coord = HOME) => {
-    const res = await app.inject({
+  const request = (here: Coord = HOME) =>
+    app.inject({
       method: 'GET',
       url: `/suggestions?lat=${here[1]}&lon=${here[0]}`,
       headers: { authorization: `Bearer ${token}`, 'x-time-zone': TZ },
     });
+  const open = async (here: Coord = HOME) => {
+    const res = await request(here);
     expect(res.statusCode).toBe(200);
     return res.json<{ suggestions: Suggestion[] }>().suggestions;
   };
+  return Object.assign(open, { request });
 }
 
 describe('cache das sugestões de rotina', () => {
@@ -116,6 +122,28 @@ describe('cache das sugestões de rotina', () => {
     expect(second[0]!.plan.planId).not.toBe(first[0]!.plan.planId);
     expect(second[0]!.plan.routes[0]!.route.geometry).toEqual(first[0]!.plan.routes[0]!.route.geometry);
     expect(second[0]!.plan.routes[0]!.route.id).not.toBe(first[0]!.plan.routes[0]!.route.id);
+  });
+
+  it('duas aberturas simultâneas chamam o roteador uma vez só', async () => {
+    const open = await commuter();
+    const [first, second] = await Promise.all([open(), open()]);
+
+    expect(routerCalls).toHaveBeenCalledTimes(1);
+    expect(first).toHaveLength(1);
+    expect(second).toHaveLength(1);
+    expect(second[0]!.plan.planId).not.toBe(first[0]!.plan.planId);
+  });
+
+  it('falha do roteador chega às aberturas simultâneas e não fica guardada', async () => {
+    const open = await commuter();
+    routerStatus = 503;
+    const failed = await Promise.all([open.request(), open.request()]);
+    expect(failed.map((r) => r.statusCode >= 500)).toEqual([true, true]);
+    expect(routerCalls).toHaveBeenCalledTimes(1);
+
+    routerStatus = 200;
+    expect(await open()).toHaveLength(1);
+    expect(routerCalls).toHaveBeenCalledTimes(2);
   });
 
   it('cada usuário tem a própria rota guardada', async () => {
