@@ -3,9 +3,11 @@ import { BINS_PER_DAY, localTime, type Coord, type Suggestion } from '@wayboo/co
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../src/app';
 import { config } from '../src/config';
-import { newPlace, saveRoutine, upsertPlace } from '../src/db';
+import { db, newPlace, saveRoutine, upsertPlace } from '../src/db';
 
 const TZ = 'America/Sao_Paulo';
+/** Quarta-feira às 15h em `TZ`: os avanços de tempo dos testes não trocam o tipo de dia da rotina. */
+const WEDNESDAY_3PM = new Date('2026-11-18T15:00:00-03:00');
 const HOME: Coord = [-46.65, -23.56];
 const WORK: Coord = [-46.62, -23.59];
 
@@ -124,7 +126,7 @@ describe('cache das sugestões de rotina', () => {
 
   it('chama o roteador de novo quando a rota guardada passa da idade máxima', async () => {
     config.suggestions.routeMaxAgeMs = 60_000;
-    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.useFakeTimers({ toFake: ['Date'], now: WEDNESDAY_3PM });
     const open = await commuter();
     await open();
     vi.advanceTimersByTime(30_000);
@@ -133,6 +135,18 @@ describe('cache das sugestões de rotina', () => {
     vi.advanceTimersByTime(31_000);
     await open();
     expect(routerCalls).toHaveBeenCalledTimes(2);
+  });
+
+  it('apaga as rotas guardadas que passaram da idade máxima', async () => {
+    config.suggestions.routeMaxAgeMs = 60_000;
+    vi.useFakeTimers({ toFake: ['Date'], now: WEDNESDAY_3PM });
+    db.exec('DELETE FROM routine_routes');
+    const count = () => (db.prepare('SELECT COUNT(*) AS n FROM routine_routes').get() as { n: number }).n;
+    await (await commuter())();
+    expect(count()).toBe(1);
+    vi.advanceTimersByTime(61_000);
+    await (await commuter())();
+    expect(count()).toBe(1);
   });
 
   it('chama o roteador de novo quando o usuário está longe da origem da rota guardada', async () => {
