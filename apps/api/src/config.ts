@@ -1,17 +1,58 @@
+import { z } from 'zod';
+
 const env = process.env;
 
-export type AiProviderName = 'anthropic' | 'openai' | 'ollama' | 'none';
+/** Vazio ou só espaços conta como ausente; assim as checagens de obrigatório abaixo pegam `"   "`. */
+const optionalText = z
+  .string()
+  .trim()
+  .transform((v) => v || undefined)
+  .optional();
+
+const AiEnv = z.object({
+  AI_MODEL: optionalText,
+  AI_BASE_URL: optionalText.pipe(z.url().optional()),
+  OPENAI_API_KEY: optionalText,
+  OLLAMA_API_KEY: optionalText,
+  OPENROUTER_API_KEY: optionalText,
+});
+
+function parseAiEnv() {
+  const r = AiEnv.safeParse(env);
+  if (r.success) return r.data;
+  // Só o nome da variável: a mensagem não pode vazar a chave.
+  const names = [...new Set(r.error.issues.map((i) => String(i.path[0])))];
+  throw new Error(`Variável de ambiente inválida: ${names.join(', ')}`);
+}
+
+const aiEnv = parseAiEnv();
+
+export type AiProviderName = 'anthropic' | 'openai' | 'ollama' | 'openrouter' | 'none';
+
+const PROVIDERS: readonly AiProviderName[] = ['anthropic', 'openai', 'ollama', 'openrouter', 'none'];
 
 function detectProvider(): AiProviderName {
   const explicit = env.AI_PROVIDER?.toLowerCase();
-  if (explicit === 'anthropic' || explicit === 'openai' || explicit === 'ollama' || explicit === 'none') return explicit;
-  if (explicit) throw new Error(`AI_PROVIDER inválido: ${explicit} (use anthropic | openai | ollama | none)`);
+  if (explicit && (PROVIDERS as readonly string[]).includes(explicit)) return explicit as AiProviderName;
+  if (explicit) throw new Error(`AI_PROVIDER inválido: ${explicit} (use ${PROVIDERS.join(' | ')})`);
   if (env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN) return 'anthropic';
-  if (env.OPENAI_API_KEY) return 'openai';
+  if (aiEnv.OPENAI_API_KEY) return 'openai';
+  if (aiEnv.OPENROUTER_API_KEY) return 'openrouter';
   return 'none';
 }
 
 const provider = detectProvider();
+
+const DEFAULT_BASE_URL: Partial<Record<AiProviderName, string>> = {
+  ollama: 'http://localhost:11434/v1',
+  openrouter: 'https://openrouter.ai/api/v1',
+};
+
+const API_KEY: Partial<Record<AiProviderName, string | undefined>> = {
+  openai: aiEnv.OPENAI_API_KEY,
+  ollama: aiEnv.OLLAMA_API_KEY ?? 'ollama',
+  openrouter: aiEnv.OPENROUTER_API_KEY,
+};
 
 export const config = {
   port: Number(env.PORT ?? 8787),
@@ -24,13 +65,16 @@ export const config = {
   corsOrigin: env.CORS_ORIGIN ?? true,
   ai: {
     provider,
-    model: env.AI_MODEL ?? (provider === 'anthropic' ? 'claude-opus-5-5' : null),
-    baseUrl: env.AI_BASE_URL ?? (provider === 'ollama' ? 'http://localhost:11434/v1' : undefined),
-    apiKey: provider === 'openai' ? env.OPENAI_API_KEY : provider === 'ollama' ? (env.OLLAMA_API_KEY ?? 'ollama') : undefined,
+    model: aiEnv.AI_MODEL ?? (provider === 'anthropic' ? 'claude-opus-5-5' : null),
+    baseUrl: aiEnv.AI_BASE_URL ?? DEFAULT_BASE_URL[provider],
+    apiKey: API_KEY[provider],
     timeoutMs: Number(env.AI_TIMEOUT_MS ?? 15000),
   },
 };
 
-if ((provider === 'openai' || provider === 'ollama') && !config.ai.model) {
-  throw new Error(`AI_MODEL é obrigatório para AI_PROVIDER=${provider} (ex.: o nome do modelo instalado no Ollama).`);
+if ((provider === 'openai' || provider === 'ollama' || provider === 'openrouter') && !config.ai.model) {
+  throw new Error(
+    `AI_MODEL é obrigatório para AI_PROVIDER=${provider} (ex.: o nome do modelo instalado no Ollama ou "openai/gpt-4o-mini" no OpenRouter).`,
+  );
 }
+if (provider === 'openrouter' && !config.ai.apiKey) throw new Error('OPENROUTER_API_KEY é obrigatório para AI_PROVIDER=openrouter.');
