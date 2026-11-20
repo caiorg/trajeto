@@ -130,9 +130,10 @@ async function updateLinear(apiKey: string, issueUrl: string, priority: Priority
     const issue = found.attachmentsForURL.nodes.find((n) => n.issue)?.issue;
     if (issue) {
       if (issue.state.type !== 'backlog' || issue.priority !== 0) return issue.identifier;
-      const input: Record<string, unknown> = {};
+      // Sem Todo, não aplica nem a prioridade: o item continua intocado e a reexecução tenta de novo.
       const stateId = issue.team.states.nodes[0]?.id;
-      if (stateId) input.stateId = stateId;
+      if (!stateId) throw new Error('o time do item no Linear não tem o estado Todo');
+      const input: Record<string, unknown> = { stateId };
       if (priority) input.priority = LINEAR_PRIORITY[priority];
       await gql(`mutation($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success } }`, {
         id: issue.id,
