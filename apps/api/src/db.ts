@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import {
   PRIOR_WEIGHTS,
@@ -190,17 +190,21 @@ export function savePrefs(userId: string, weights: PreferenceWeights, updates: n
 const hashToken = (token: string) => createHash('sha256').update(token).digest('hex');
 
 /**
- * Cria um aparelho com token aleatório de 256 bits; o banco guarda só o hash.
+ * Registra o token que o próprio aparelho gerou (256 bits); o banco guarda só o hash.
+ * Idempotente: repetir o mesmo token devolve o mesmo usuário, então uma resposta perdida
+ * não cria outra identidade. O aparelho grava o token antes de enviar.
  * `legacyUserId` é o UUID que o app enviava em `x-user-id`: o servidor adota esse id
  * (e os dados gravados nele) se nenhum aparelho o reivindicou antes. Senão, cria um usuário novo.
  */
-export function registerDevice(legacyUserId?: string): { userId: string; token: string } {
-  const token = randomBytes(32).toString('base64url');
+export function registerDevice(token: string, legacyUserId?: string): { userId: string } {
+  const hash = hashToken(token);
   return transaction(() => {
+    const known = db.prepare('SELECT user_id FROM devices WHERE token_hash = ?').get(hash) as Row | undefined;
+    if (known) return { userId: String(known.user_id) };
     const claimed = legacyUserId !== undefined && db.prepare('SELECT 1 FROM devices WHERE user_id = ?').get(legacyUserId) !== undefined;
     const userId = legacyUserId !== undefined && !claimed ? legacyUserId : randomUUID();
-    db.prepare('INSERT INTO devices (token_hash, user_id, created_at) VALUES (?, ?, ?)').run(hashToken(token), userId, Date.now());
-    return { userId, token };
+    db.prepare('INSERT INTO devices (token_hash, user_id, created_at) VALUES (?, ?, ?)').run(hash, userId, Date.now());
+    return { userId };
   });
 }
 

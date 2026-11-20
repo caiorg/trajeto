@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app';
 import { db, setShareCrowd } from '../src/db';
@@ -11,10 +11,12 @@ beforeAll(async () => {
 });
 afterAll(() => app.close());
 
-async function register(legacyUserId?: string): Promise<Device> {
-  const res = await app.inject({ method: 'POST', url: '/auth/device', payload: legacyUserId ? { legacyUserId } : {} });
+const newToken = () => randomBytes(32).toString('base64url');
+
+async function register(legacyUserId?: string, token = newToken()): Promise<Device> {
+  const res = await app.inject({ method: 'POST', url: '/auth/device', payload: legacyUserId ? { token, legacyUserId } : { token } });
   expect(res.statusCode).toBe(200);
-  return res.json<Device>();
+  return { ...res.json<{ userId: string }>(), token };
 }
 
 const privacy = (headers: Record<string, string>) => app.inject({ method: 'GET', url: '/privacy', headers });
@@ -29,11 +31,10 @@ describe('autenticação por aparelho', () => {
     expect((await privacy({ 'x-user-id': userId })).statusCode).toBe(401);
   });
 
-  it('emite token que dá acesso só aos dados do próprio usuário', async () => {
+  it('token registrado dá acesso só aos dados do próprio usuário', async () => {
     const a = await register();
     const b = await register();
     expect(a.userId).not.toBe(b.userId);
-    expect(a.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
 
     const put = await app.inject({ method: 'PUT', url: '/privacy', headers: bearer(a.token), payload: { shareCrowd: true } });
     expect(put.json()).toEqual({ shareCrowd: true });
@@ -59,8 +60,19 @@ describe('autenticação por aparelho', () => {
     expect((await privacy(bearer(second.token))).json()).toEqual({ shareCrowd: false });
   });
 
-  it('valida o UUID antigo', async () => {
-    const res = await app.inject({ method: 'POST', url: '/auth/device', payload: { legacyUserId: 'nao-uuid' } });
-    expect(res.statusCode).toBe(400);
+  it('repetir o registro com o mesmo token devolve o mesmo usuário', async () => {
+    // Resposta perdida: o aparelho reenvia o token que já tinha gravado.
+    const legacy = randomUUID();
+    const first = await register(legacy);
+    const retry = await register(legacy, first.token);
+    expect(retry.userId).toBe(legacy);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM devices WHERE user_id = ?').get(legacy)).toEqual({ n: 1 });
+  });
+
+  it('valida o token e o UUID antigo', async () => {
+    const post = (payload: object) => app.inject({ method: 'POST', url: '/auth/device', payload });
+    expect((await post({})).statusCode).toBe(400);
+    expect((await post({ token: 'curto' })).statusCode).toBe(400);
+    expect((await post({ token: newToken(), legacyUserId: 'nao-uuid' })).statusCode).toBe(400);
   });
 });

@@ -37,7 +37,8 @@ import { assistant, insights, suggestions } from './services/assistant';
 import { plan } from './services/planning';
 import { addSamples, finishTrip, rerouteTrip, startTrip } from './services/trips';
 
-/** Token do aparelho emitido por `POST /auth/device`: 32 bytes em base64url. */
+/** Token gerado pelo aparelho e registrado em `POST /auth/device`: 32 bytes em base64url. */
+const TOKEN = /^[A-Za-z0-9_-]{43}$/;
 const BEARER = /^Bearer ([A-Za-z0-9_-]{43})$/;
 
 function userOf(req: FastifyRequest): string {
@@ -96,8 +97,8 @@ export async function buildApp(opts: { logger?: boolean } = {}) {
   app.get('/health', async () => ({ ok: true, ai: llm ? { provider: llm.name, model: llm.model } : null }));
 
   app.post('/auth/device', async (req) => {
-    const b = z.object({ legacyUserId: z.string().uuid().optional() }).parse(req.body ?? {});
-    return registerDevice(b.legacyUserId);
+    const b = z.object({ token: z.string().regex(TOKEN), legacyUserId: z.string().uuid().optional() }).parse(req.body ?? {});
+    return registerDevice(b.token, b.legacyUserId);
   });
 
   app.get('/geocode', async (req) => {

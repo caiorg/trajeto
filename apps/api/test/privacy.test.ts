@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { buildSegments, cumulativeDistances, simulateDrive, type Coord, type Maneuver, type PlanResponse, type Route } from '@wayboo/core';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../src/app';
@@ -65,7 +65,9 @@ afterAll(() => app.close());
 type User = { userId: string; token: string };
 
 async function register(): Promise<User> {
-  return (await app.inject({ method: 'POST', url: '/auth/device', payload: {} })).json<User>();
+  const token = randomBytes(32).toString('base64url');
+  const res = await app.inject({ method: 'POST', url: '/auth/device', payload: { token } });
+  return { ...res.json<{ userId: string }>(), token };
 }
 
 async function call<T>(user: User, method: 'GET' | 'POST' | 'PUT', url: string, payload?: object) {

@@ -38,39 +38,60 @@ const settingsStorage = createJSONStorage(() => ({
 
 export type ThemePref = 'system' | 'light' | 'dark';
 
-/** Token emitido por `POST /auth/device`. Vale só para o servidor que o emitiu. */
-export interface DeviceAuth {
-  apiUrl: string;
+/** Mesma forma na chave das credenciais e no envio: `https://x/` e `https://x` são o mesmo servidor. */
+export function normalizeApiUrl(url: string): string {
+  return url.trim().replace(/\/+$/, '');
+}
+
+/**
+ * Credencial deste aparelho num servidor. O aparelho gera o token e o grava antes de registrá-lo;
+ * `userId` só existe depois que `POST /auth/device` confirmou o registro.
+ */
+export interface DeviceCredential {
   token: string;
+  userId?: string;
 }
 
 interface Settings {
-  /** Gerado no aparelho até o primeiro registro; depois, o id que o servidor devolveu. */
+  /** UUID anônimo do aparelho, de antes dos tokens. Vai em `legacyUserId` para o servidor adotar os dados antigos. */
   userId: string;
-  auth: DeviceAuth | null;
+  /** Uma credencial por servidor (chave: `normalizeApiUrl`), para voltar a um servidor sem perder a identidade. */
+  credentials: Record<string, DeviceCredential>;
   apiUrl: string;
   voice: boolean;
   theme: ThemePref;
   avoidTolls: boolean;
   avoidHighways: boolean;
-  set: (patch: Partial<Omit<Settings, 'set' | 'setAuth' | 'userId' | 'auth'>>) => void;
-  setAuth: (userId: string, auth: DeviceAuth | null) => void;
+  set: (patch: Partial<Omit<Settings, 'set' | 'setCredential' | 'userId' | 'credentials'>>) => void;
+  setCredential: (apiUrl: string, credential: DeviceCredential) => void;
 }
+
+/** Resolve com o erro da leitura do AsyncStorage (ou `null`) quando a hidratação termina. */
+let finishHydration: (error: unknown) => void = () => {};
+export const settingsHydration = new Promise<unknown>((resolve) => {
+  finishHydration = resolve;
+});
 
 export const useSettings = create<Settings>()(
   persist(
     (set) => ({
       userId: randomUUID(),
-      auth: null,
+      credentials: {},
       apiUrl: defaultApiUrl(),
       voice: true,
       theme: 'system',
       avoidTolls: false,
       avoidHighways: false,
       set: (patch) => set(patch),
-      setAuth: (userId, auth) => set({ userId, auth }),
+      setCredential: (apiUrl, credential) =>
+        set((s) => ({ credentials: { ...s.credentials, [normalizeApiUrl(apiUrl)]: credential } })),
     }),
-    { name: 'wayboo-settings', storage: settingsStorage },
+    {
+      name: 'wayboo-settings',
+      storage: settingsStorage,
+      // O zustand não marca `hasHydrated` nem avisa `onFinishHydration` quando a leitura falha.
+      onRehydrateStorage: () => (_state, error) => finishHydration(error ?? null),
+    },
   ),
 );
 
