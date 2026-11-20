@@ -55,6 +55,31 @@ const VALHALLA = {
 const routerCalls = vi.fn();
 /** Status HTTP que o roteador devolve; 200 responde a rota. */
 let routerStatus = 200;
+/** Enquanto definida, o roteador só responde depois que ela resolve. */
+let routerGate: Promise<void> | null = null;
+/** Segura a resposta do roteador até chamar a função devolvida. */
+function holdRouter() {
+  let release!: () => void;
+  routerGate = new Promise((resolve) => (release = resolve));
+  return release;
+}
+/**
+ * Abre as sugestões duas vezes ao mesmo tempo com o roteador seguro. Confere que, com os dois pedidos já
+ * dentro do servidor, houve uma chamada ao roteador e nenhum terminou; então libera e devolve as respostas.
+ */
+async function concurrently<T>(open: () => Promise<T>) {
+  const release = holdRouter();
+  let finished = 0;
+  const track = (p: Promise<T>) => p.finally(() => finished++);
+  const both = Promise.all([track(open()), track(open())] as const);
+  await vi.waitFor(() => expect(routerCalls).toHaveBeenCalledTimes(1));
+  // Dá tempo ao segundo pedido de chegar até o roteador, se fosse chamá-lo.
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(routerCalls).toHaveBeenCalledTimes(1);
+  expect(finished).toBe(0);
+  release();
+  return both;
+}
 const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
 
 let app: Awaited<ReturnType<typeof buildApp>>;
@@ -67,12 +92,14 @@ const defaults = { ...config.suggestions };
 beforeEach(() => {
   routerCalls.mockClear();
   routerStatus = 200;
+  routerGate = null;
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: string | URL | Request) => {
       const url = String(input instanceof Request ? input.url : input);
       if (url.startsWith(`${config.valhallaUrl}/route`)) {
         routerCalls(url);
+        await routerGate;
         return routerStatus === 200 ? json(VALHALLA) : new Response('falhou', { status: routerStatus });
       }
       if (url.startsWith(config.openMeteoUrl)) return json({ current: { precipitation: 0, weather_code: 0, visibility: 10000 } });
@@ -126,7 +153,7 @@ describe('cache das sugestões de rotina', () => {
 
   it('duas aberturas simultâneas chamam o roteador uma vez só', async () => {
     const open = await commuter();
-    const [first, second] = await Promise.all([open(), open()]);
+    const [first, second] = await concurrently(() => open());
 
     expect(routerCalls).toHaveBeenCalledTimes(1);
     expect(first).toHaveLength(1);
@@ -137,7 +164,7 @@ describe('cache das sugestões de rotina', () => {
   it('falha do roteador chega às aberturas simultâneas e não fica guardada', async () => {
     const open = await commuter();
     routerStatus = 503;
-    const failed = await Promise.all([open.request(), open.request()]);
+    const failed = await concurrently(() => open.request());
     expect(failed.map((r) => r.statusCode >= 500)).toEqual([true, true]);
     expect(routerCalls).toHaveBeenCalledTimes(1);
 
