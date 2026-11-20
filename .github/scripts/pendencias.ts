@@ -12,6 +12,7 @@ export type Pendencia =
 
 const PRIORITIES: Record<string, Priority> = { high: 'High', medium: 'Medium', low: 'Low' };
 const LINEAR_PRIORITY: Record<Priority, number> = { High: 2, Medium: 3, Low: 4 };
+const LINEAR_PRIORITY_NAME = ['sem prioridade', 'Urgent', 'High', 'Medium', 'Low'];
 
 export function parsePendencias(prBody: string): Pendencia[] {
   const lines = prBody.replace(/\r\n/g, '\n').replace(/<!--[\s\S]*?-->/g, '').split('\n');
@@ -59,6 +60,11 @@ function dedent(lines: string[]): string {
 
 export const marker = (pr: number) => `<!-- pendencia-do-pr: ${pr} -->`;
 
+// Identidade de uma issue criada pelo workflow: PR de origem + título pedido no PR.
+// Fica no corpo da issue, então sobrevive a uma mudança de título.
+export const itemMarker = (pr: number, title: string) =>
+  `<!-- pendencia-do-pr: ${pr} item: ${new Bun.CryptoHasher('sha256').update(title.trim().toLowerCase()).digest('hex').slice(0, 16)} -->`;
+
 type Issue = { number: number; title: string; state: string; body: string | null; html_url: string; pull_request?: unknown };
 
 function github(token: string, repository: string, apiUrl: string) {
@@ -97,6 +103,7 @@ function github(token: string, repository: string, apiUrl: string) {
 
 // O sync do Linear cria o item em Backlog e sem prioridade; aqui ele vai para Todo com a prioridade do PR.
 // Item que já saiu desse estado (execução anterior ou mudança manual) não é alterado.
+// Devolve o identificador e a prioridade que o item tem no Linear depois da chamada.
 async function updateLinear(apiKey: string, issueUrl: string, priority: Priority | null): Promise<string> {
   const gql = async <T>(query: string, variables: Record<string, unknown>): Promise<T> => {
     const res = await fetch(process.env.LINEAR_API_URL ?? 'https://api.linear.app/graphql', {
@@ -129,7 +136,8 @@ async function updateLinear(apiKey: string, issueUrl: string, priority: Priority
     );
     const issue = found.attachmentsForURL.nodes.find((n) => n.issue)?.issue;
     if (issue) {
-      if (issue.state.type !== 'backlog' || issue.priority !== 0) return issue.identifier;
+      const current = `${issue.identifier}, ${LINEAR_PRIORITY_NAME[issue.priority] ?? issue.priority}`;
+      if (issue.state.type !== 'backlog' || issue.priority !== 0) return current;
       // Sem Todo, não aplica nem a prioridade: o item continua intocado e a reexecução tenta de novo.
       const stateId = issue.team.states.nodes[0]?.id;
       if (!stateId) throw new Error('o time do item no Linear não tem o estado Todo');
@@ -139,7 +147,7 @@ async function updateLinear(apiKey: string, issueUrl: string, priority: Priority
         id: issue.id,
         input,
       });
-      return issue.identifier;
+      return `${issue.identifier}, ${priority ?? LINEAR_PRIORITY_NAME[0]}`;
     }
     await Bun.sleep(5000);
   }
@@ -184,14 +192,15 @@ async function main() {
     if (unknown.length) warnings.push(`- "${item.title}": labels inexistentes ignoradas: ${unknown.join(', ')}.`);
 
     // Numa reexecução, a issue já tem o marcador deste PR: não cria outra e só retoma o Linear.
-    let issue = sameTitle.find((i) => i.body?.includes(tag));
+    const itemTag = itemMarker(pr.number, item.title);
+    let issue = issues.find((i) => i.body?.includes(itemTag));
     if (!issue) {
       const dup = sameTitle.find((i) => i.state === 'open');
       if (dup) {
         warnings.push(`- "${item.title}" já existe em #${dup.number}; não criei outra.`);
         continue;
       }
-      const body = `${item.body}\n\n---\nRegistrada no merge do #${pr.number}.\n${tag}`;
+      const body = `${item.body}\n\n---\nRegistrada no merge do #${pr.number}.\n${itemTag}`;
       const created = await gh.createIssue({ title: item.title, body, labels });
       issue = { number: created.number, title: item.title, state: 'open', body, html_url: created.html_url };
       issues.push(issue);
@@ -200,7 +209,7 @@ async function main() {
     let linear = '';
     if (linearKey) {
       try {
-        linear = ` (${await updateLinear(linearKey, issue.html_url, item.priority)}, ${item.priority ?? 'sem prioridade'})`;
+        linear = ` (${await updateLinear(linearKey, issue.html_url, item.priority)})`;
       } catch (e) {
         warnings.push(`- #${issue.number}: não atualizei o Linear: ${(e as Error).message}.`);
       }

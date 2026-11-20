@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { parsePendencias } from './pendencias';
+import { itemMarker, parsePendencias } from './pendencias';
 
 const body = `Resumo do PR.
 
@@ -65,5 +65,13 @@ describe('parsePendencias', () => {
     expect(parsePendencias('## Pendências\n- [ ] Item | AFK\n  corpo\nTexto solto.\n  não entra')).toEqual([
       { kind: 'issue', title: 'Item', labels: ['AFK'], priority: null, body: 'corpo' },
     ]);
+  });
+});
+
+describe('itemMarker', () => {
+  test('identifica o item pelo PR e pelo título pedido, sem diferenciar maiúsculas', () => {
+    expect(itemMarker(7, 'Item A')).toBe(itemMarker(7, ' item a '));
+    expect(itemMarker(7, 'Item A')).not.toBe(itemMarker(7, 'Item B'));
+    expect(itemMarker(77, 'Item A')).not.toContain(itemMarker(7, 'Item A').slice(0, -4));
   });
 });
