@@ -1,9 +1,12 @@
 import type { LatLon } from '@wayboo/core';
-import { useEffect, useRef, useState } from 'react';
+import { type ComponentRef, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Keyboard, Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { api, type GeocodeResult } from '@/lib/api';
 import { useTheme } from '@/lib/theme';
 import { Icon, shadow, T } from './ui';
+
+/** Exemplo mostrado na dica do copiloto; o placeholder não cabe em telas estreitas. */
+const ASK_EXAMPLE = 'pro trabalho sem pedágio';
 
 /** Frases que indicam pedido em linguagem natural, não só um endereço. */
 const NATURAL = /\b(me leva|quero|preciso|sem|evit|passando|parando|chegar|sair|pra casa|pro trabalho|caminho de sempre)\b/i;
@@ -25,6 +28,10 @@ export function SearchPanel({
   const [focused, setFocused] = useState(false);
   const [loading, setLoading] = useState(false);
   const seq = useRef(0);
+  const input = useRef<ComponentRef<typeof TextInput>>(null);
+  const blurTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  useEffect(() => () => clearTimeout(blurTimer.current), []);
 
   useEffect(() => {
     const text = q.trim();
@@ -55,19 +62,30 @@ export function SearchPanel({
     onAsk(text);
   };
 
+  /** Foco na entrada ou na dica mantém o painel aberto; sair dos dois fecha após o toque ser processado. */
+  const keepOpen = () => {
+    clearTimeout(blurTimer.current);
+    setFocused(true);
+  };
+  const closeSoon = () => {
+    blurTimer.current = setTimeout(() => setFocused(false), 200);
+  };
+
   const showList = focused && q.trim().length >= 3;
+  const showHint = focused && !showList;
 
   return (
     <View style={[styles.wrap, { backgroundColor: t.surface }, shadow(t)]}>
       <View style={styles.row}>
         <Icon name="magnify" color={t.textMuted} />
         <TextInput
+          ref={input}
           value={q}
           onChangeText={setQ}
-          onFocus={() => setFocused(true)}
-          onBlur={() => setTimeout(() => setFocused(false), 200)}
+          onFocus={keepOpen}
+          onBlur={closeSoon}
           onSubmitEditing={() => (results[0] && !NATURAL.test(q) ? onPick(results[0]) : ask())}
-          placeholder={'Para onde? Ou peça: "pro trabalho sem pedágio"'}
+          placeholder="Para onde?"
           placeholderTextColor={t.textMuted}
           returnKeyType="search"
           style={[styles.input, { color: t.text }]}
@@ -80,6 +98,31 @@ export function SearchPanel({
           </Pressable>
         ) : null}
       </View>
+      {showHint ? (
+        <View style={[styles.list, { borderTopColor: t.border }]}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Usar exemplo: ${ASK_EXAMPLE}`}
+            onFocus={keepOpen}
+            onBlur={closeSoon}
+            onPress={() => {
+              setQ(ASK_EXAMPLE);
+              input.current?.focus();
+            }}
+            style={({ pressed }) => [styles.item, pressed && { backgroundColor: t.surfaceAlt }]}
+          >
+            <View style={[styles.badge, { backgroundColor: t.learnSoft }]}>
+              <Icon name="creation" color={t.learn} size={18} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <T numberOfLines={1}>Ou peça ao copiloto</T>
+              <T variant="caption" numberOfLines={1}>
+                Ex.: "{ASK_EXAMPLE}"
+              </T>
+            </View>
+          </Pressable>
+        </View>
+      ) : null}
       {showList ? (
         <View style={[styles.list, { borderTopColor: t.border }]}>
           <Pressable onPress={ask} style={({ pressed }) => [styles.item, pressed && { backgroundColor: t.surfaceAlt }]}>
