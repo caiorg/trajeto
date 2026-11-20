@@ -70,10 +70,13 @@ describe('retenção dos rastros GPS', () => {
     expect(samplesOf(tripId)).toBe(0);
   });
 
-  it('abandono conta da última amostra, não do início da viagem', async () => {
-    const { tripId, planId } = await api.drive(await register(), false);
-    // Viagem longa: começou há 30 horas e ainda manda pontos.
-    db.prepare('UPDATE trips SET started_at = ? WHERE id = ?').run(Date.now() - 30 * HOUR_MS, tripId);
+  it('abandono conta do último envio de amostras, não do início da viagem', async () => {
+    const user = await register();
+    const { tripId, planId } = await api.drive(user, false);
+    // Viagem longa: começou há 30 horas, o envio anterior foi há 25, e agora chega outro lote.
+    db.prepare('UPDATE trips SET started_at = ?, last_sample_at = ? WHERE id = ?').run(Date.now() - 30 * HOUR_MS, Date.now() - 25 * HOUR_MS, tripId);
+    const late = { t: Date.now() - 25 * HOUR_MS, lat: -23.5, lon: -46.6 };
+    expect((await call(user, 'POST', `/trips/${tripId}/samples`, { samples: [late] })).status).toBe(200);
 
     purgeExpiredTraces(DAY_MS);
     expect(samplesOf(tripId)).toBeGreaterThan(0);

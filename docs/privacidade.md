@@ -10,8 +10,8 @@ O app gera um token aleatório de 256 bits e o registra em `POST /auth/device`. 
 
 | Tabela | O que tem | Para quê | Prazo |
 | --- | --- | --- | --- |
-| `samples` | Rastro GPS bruto: horário, latitude, longitude, velocidade, rumo e precisão de cada ponto | Medir quanto cada trecho demorou ao encerrar a viagem | Apagado `GPS_RETENTION_HOURS` horas depois do fim da viagem (padrão 24). Viagem nunca encerrada conta como abandonada 24 horas (ou o prazo, se maior) depois do último envio de amostras, pelo relógio do servidor |
-| `plans` | Pedido de rota: origem, destino, rotas sugeridas com geometria e contexto | Iniciar a viagem e gerar o resumo do copiloto | Sem viagem: 2 dias. Com viagem: o mesmo prazo do rastro GPS |
+| `samples` | Rastro GPS bruto: horário, latitude, longitude, velocidade, rumo e precisão de cada ponto | Medir quanto cada trecho demorou ao encerrar a viagem | Apagado `GPS_RETENTION_HOURS` horas depois do fim da viagem (padrão 24). Viagem nunca encerrada conta como abandonada 24 horas (ou o prazo, se maior) depois do último envio de amostras, pelo relógio do servidor. Sem nenhum envio, o prazo conta do início da viagem |
+| `plans` | Pedido de rota: origem, destino, rotas sugeridas com geometria e contexto | Iniciar a viagem e gerar o resumo do copiloto | Sem viagem: `GPS_RETENTION_HOURS` horas depois de criado, na rodada de limpeza; cada plano novo também apaga os sem viagem com mais de 2 dias. Com viagem: o mesmo prazo do rastro GPS |
 | `trips`, `trip_legs` | Resumo da viagem: início, fim, duração prevista e real, distância, lugares de origem e destino, erro da previsão | Histórico, estatísticas em `GET /insights` e tempo médio de rotinas | Até o usuário apagar |
 | `stats` | Tempo aprendido por trecho de rua, contexto e par origem-destino (média com decaimento) | Prever o tempo das próximas viagens | Até o usuário apagar |
 | `anomalies` | Trecho, momento, tempo esperado e observado quando a diferença foi grande | Registro; hoje só a contagem aparece no fim da viagem | Até o usuário apagar |
