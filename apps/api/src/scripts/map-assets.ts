@@ -9,7 +9,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { selfHostStyle, spriteOf, type MapStyle } from '../selfhost/map-style';
+import { MapStyleSchema, selfHostStyle, spriteOf, type MapStyle } from '../selfhost/map-style';
 
 const OFM_STYLES = 'https://tiles.openfreemap.org/styles';
 const OFM_ASSETS = 'https://assets.openfreemap.com';
@@ -40,15 +40,34 @@ async function extract(url: string, dest: string): Promise<void> {
   await rename(tmp, dest);
 }
 
+/** Estilo válido ou `null`; o erro vai para o log. Arquivo ausente conta como inválido. */
+async function readStyle(file: string): Promise<MapStyle | null> {
+  try {
+    const style = MapStyleSchema.parse(JSON.parse(await readFile(file, 'utf8')));
+    spriteOf(style);
+    return style;
+  } catch (e) {
+    if (existsSync(file)) console.warn(`Estilo inválido em ${file}: ${e instanceof Error ? e.message : e}`);
+    return null;
+  }
+}
+
+/** Estilo do OpenFreeMap em cache. Só vai para o cache depois de validado, então um download ruim não trava as próximas execuções. */
 async function upstreamStyle(name: string): Promise<MapStyle> {
   const file = join(dir, 'upstream', `${name}.json`);
-  if (!existsSync(file)) {
-    await mkdir(join(dir, 'upstream'), { recursive: true });
-    console.log(`Baixando estilo ${name}`);
-    await download(`${OFM_STYLES}/${name}`, `${file}.tmp`);
-    await rename(`${file}.tmp`, file);
+  const cached = await readStyle(file);
+  if (cached) return cached;
+  await mkdir(join(dir, 'upstream'), { recursive: true });
+  console.log(`Baixando estilo ${name}`);
+  const tmp = `${file}.tmp`;
+  await download(`${OFM_STYLES}/${name}`, tmp);
+  const style = await readStyle(tmp);
+  if (!style) {
+    await rm(tmp, { force: true });
+    throw new Error(`O OpenFreeMap devolveu um estilo inválido para ${name}.`);
   }
-  return JSON.parse(await readFile(file, 'utf8')) as MapStyle;
+  await rename(tmp, file);
+  return style;
 }
 
 await mkdir(join(dir, 'styles'), { recursive: true });

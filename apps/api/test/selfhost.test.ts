@@ -1,12 +1,23 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { selfHostStyle, type MapStyle } from '../src/selfhost/map-style';
+import { MapStyleSchema, selfHostStyle, type MapStyle } from '../src/selfhost/map-style';
 
 // `config.ts` lê o ambiente ao ser importado; o hoisted roda antes dos imports.
-vi.hoisted(() => {
+// Sem MAP_STYLE_DARK_URL, para testar o fallback mesmo com a variável exportada no shell.
+const saved = vi.hoisted(() => {
+  const prev = { MAP_STYLE_URL: process.env.MAP_STYLE_URL, MAP_STYLE_DARK_URL: process.env.MAP_STYLE_DARK_URL };
   process.env.MAP_STYLE_URL = 'http://wayboo.lan:8080/map/styles/light.json';
+  delete process.env.MAP_STYLE_DARK_URL;
+  return prev;
 });
 
 const { buildApp } = await import('../src/app');
+
+afterAll(() => {
+  for (const [k, v] of Object.entries(saved)) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+});
 
 const upstream: MapStyle = {
   version: 8,
@@ -39,6 +50,12 @@ describe('estilo do mapa no servidor próprio', () => {
     expect(style.layers.map((l) => l.id)).toEqual(['background', 'water']);
     expect(style.glyphs).toBe('http://wayboo.lan:8080/map/fonts/{fontstack}/{range}.pbf');
     expect(style.sprite).toBe('http://wayboo.lan:8080/map/sprites/ofm_f384/ofm');
+  });
+
+  it('recusa resposta que não é um estilo MapLibre', () => {
+    expect(MapStyleSchema.safeParse({ error: 'rate limited' }).success).toBe(false);
+    expect(MapStyleSchema.safeParse({ ...upstream, version: 7 }).success).toBe(false);
+    expect(MapStyleSchema.safeParse(upstream).success).toBe(true);
   });
 });
 

@@ -13,7 +13,7 @@ O `docker-compose.yml` da raiz sobe o Wayboo inteiro numa máquina sua: API, rot
 | `tiles-build` | `ghcr.io/onthegomap/planetiler` | Preparo: gera o PMTiles a partir do extrato |
 | `map-assets` | mesma imagem da API | Preparo: baixa estilos, fontes e sprites do OpenFreeMap e reescreve os estilos com `PUBLIC_URL` |
 
-Os serviços de preparo rodam até terminar e só refazem o trabalho quando algo muda. Trocar `OSM_EXTRACT_URL` baixa o novo extrato e refaz o grafo do Valhalla e os tiles. Trocar `PUBLIC_URL` regrava os estilos.
+Os serviços de preparo rodam até terminar e só refazem o trabalho quando algo muda. Trocar `OSM_EXTRACT_URL` baixa o novo extrato e refaz o grafo do Valhalla e os tiles (ver [Atualizar os dados](#atualizar-os-dados)). Trocar `PUBLIC_URL` regrava os estilos.
 
 O gateway expõe tudo numa porta (padrão `8080`):
 
@@ -77,6 +77,23 @@ Precisa também de Docker com o Compose v2 e de acesso à internet durante o pre
 
 4. No app, abra Ajustes, troque a URL do servidor pela `PUBLIC_URL` e toque em testar. O status mostra "Mapa do próprio servidor". O app lê os estilos em `/health` e os guarda, então o mapa já abre pelo servidor próprio no próximo início.
 
+## HTTPS
+
+Por padrão o gateway serve HTTP. Nesse modo, o token do aparelho e as rotas passam em texto claro, e qualquer um na mesma rede pode lê-los. Use HTTP só numa rede em que você confia, ou por uma VPN como Tailscale ou WireGuard.
+
+Com um domínio que aponta para a máquina e as portas 80 e 443 abertas na internet, o Caddy emite e renova o certificado sozinho (Let's Encrypt):
+
+```sh
+GATEWAY_ADDRESS=wayboo.example.com
+GATEWAY_PORT=80
+GATEWAY_HTTPS_PORT=443
+PUBLIC_URL=https://wayboo.example.com
+```
+
+A renovação do certificado é uma chamada externa periódica. Os certificados ficam no volume `caddy`.
+
+Se outro proxy já termina o TLS, deixe `GATEWAY_ADDRESS=:80` e publique o gateway só para esse proxy com `GATEWAY_BIND=127.0.0.1`. Assim ninguém na rede chega ao HTTP direto.
+
 ## O que ainda chama serviço externo
 
 - Clima: a API consulta o Open-Meteo (`OPEN_METEO_URL`). Sem acesso, o ETA segue sem o fator clima.
@@ -91,12 +108,15 @@ docker compose rm -sf photon && docker volume rm wayboo_photon && docker compose
 
 ## Atualizar os dados
 
-- Mapa e rotas: o mesmo `OSM_EXTRACT_URL` não baixa de novo. Para buscar um extrato mais novo, apague o arquivo e suba outra vez:
+- Mapa e rotas: o mesmo `OSM_EXTRACT_URL` não baixa de novo. Para buscar um extrato mais novo, apague o arquivo. Para trocar de região, mude `OSM_EXTRACT_URL` no `.env`. Nos dois casos, suba de novo e reinicie `valhalla` e `tiles`:
 
   ```sh
-  docker compose run --rm osm-extract rm /custom_files/region.osm.pbf
+  docker compose run --rm osm-extract rm /custom_files/region.osm.pbf   # só para atualizar a mesma URL
   docker compose up -d
+  docker compose restart valhalla tiles
   ```
+
+  O `osm-extract` grava o sha256 do extrato. Se o conteúdo mudou, ele apaga o grafo e o banco de limites do Valhalla, e o `tiles-build` gera um novo PMTiles. O `docker compose up -d` não reinicia contêineres que já estão rodando. Por isso o `restart` é necessário: ao iniciar sem grafo, o Valhalla o reconstrói, e o `go-pmtiles` passa a ler o arquivo novo. Se o conteúdo não mudou, nada é refeito. A geração dos tiles grava em `build/` e só troca o arquivo no fim, então uma interrupção mantém o mapa anterior.
 
 - Estilos do mapa: apague `upstream/` no volume `map` para baixar os estilos atuais do OpenFreeMap:
 
@@ -114,5 +134,6 @@ docker compose rm -sf photon && docker volume rm wayboo_photon && docker compose
 | `map` | estilos, fontes e sprites |
 | `photon` | índice do Photon |
 | `api` | banco SQLite da API |
+| `caddy` | certificados do HTTPS |
 
 `docker compose down -v` apaga todos, inclusive o banco da API.

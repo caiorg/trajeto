@@ -3,7 +3,8 @@
 	admin off
 }
 
-:80 {
+# `:80` serve HTTP. Um domínio (ex.: wayboo.example.com) ativa o HTTPS automático do Caddy.
+{$GATEWAY_ADDRESS::80} {
 	# Tiles do go-pmtiles: /tiles/region/{z}/{x}/{y}.mvt
 	handle_path /tiles/* {
 		header Access-Control-Allow-Origin *

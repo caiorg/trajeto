@@ -2,6 +2,7 @@
  * Converte um estilo do OpenFreeMap para o servidor próprio: tiles do PMTiles local, fontes e
  * sprites servidos pelo gateway. Depois da conversão, o estilo não aponta para nenhum host externo.
  */
+import { z } from 'zod';
 
 /** Nome do arquivo PMTiles servido pelo `go-pmtiles` (`/tiles/<nome>/{z}/{x}/{y}.mvt`). */
 export const TILESET = 'region';
@@ -9,19 +10,16 @@ export const TILESET = 'region';
 const ATTRIBUTION =
   '<a href="https://openfreemap.org" target="_blank">OpenFreeMap</a> <a href="https://www.openmaptiles.org/" target="_blank">&copy; OpenMapTiles</a> Data from <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>';
 
-interface StyleLayer {
-  id: string;
-  source?: string;
-  [key: string]: unknown;
-}
+/** O que a conversão usa de um estilo MapLibre; o resto passa intacto. */
+export const MapStyleSchema = z.looseObject({
+  version: z.literal(8),
+  sources: z.record(z.string(), z.looseObject({ type: z.string() })),
+  layers: z.array(z.looseObject({ id: z.string(), source: z.string().optional() })),
+  glyphs: z.string().optional(),
+  sprite: z.string().optional(),
+});
 
-export interface MapStyle {
-  sources: Record<string, { type: string; [key: string]: unknown }>;
-  layers: StyleLayer[];
-  glyphs?: string;
-  sprite?: string;
-  [key: string]: unknown;
-}
+export type MapStyle = z.infer<typeof MapStyleSchema>;
 
 /** `.../sprites/ofm_f384/ofm` vira `{ id: 'ofm_f384', name: 'ofm' }`. O pacote do OpenFreeMap se chama `<id>.tar.gz`. */
 export function spriteOf(style: MapStyle): { id: string; name: string } {
