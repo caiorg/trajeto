@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod';
 import OpenAI from 'openai';
 import { zodResponseFormat } from 'openai/helpers/zod';
-import type { z } from 'zod';
+import { z } from 'zod';
 import { config } from '../config';
 
 /**
@@ -94,6 +94,20 @@ export const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 /** Cabeçalhos opcionais de atribuição do app (https://openrouter.ai/docs/api-reference/overview). */
 const OPENROUTER_HEADERS = { 'HTTP-Referer': 'https://github.com/caiorg/wayboo', 'X-OpenRouter-Title': 'Wayboo' };
 
+const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/** A chave vai no cabeçalho `Authorization`: só aceita HTTPS, ou HTTP em loopback (proxy local). */
+function assertSecureBaseUrl(baseURL: string) {
+  const url = new URL(baseURL);
+  if (url.protocol === 'https:' || (url.protocol === 'http:' && LOOPBACK.has(url.hostname))) return;
+  throw new AiError('AI_BASE_URL do OpenRouter precisa usar https:// (http:// só em localhost)');
+}
+
+/** Só o que o preflight lê de `GET /models/{id}/endpoints`; formato diferente conta como catálogo indisponível. */
+const EndpointsCatalog = z.object({
+  data: z.object({ endpoints: z.array(z.object({ supported_parameters: z.array(z.string()).optional() })) }),
+});
+
 /**
  * Consulta `GET /models/{id}/endpoints`: o suporte a saída estruturada varia por endpoint (provedor) do modelo.
  * Retorna `null` quando o catálogo não responde; aí a chamada segue e `require_parameters` decide.
@@ -109,10 +123,9 @@ export async function openRouterStructuredOutputSupport(
       signal: AbortSignal.timeout(config.ai.timeoutMs),
     });
     if (!res.ok) return null;
-    const body = (await res.json()) as { data?: { endpoints?: { supported_parameters?: string[] }[] } };
-    const endpoints = body.data?.endpoints;
-    if (!Array.isArray(endpoints)) return null;
-    return endpoints.some((e) => e.supported_parameters?.includes('structured_outputs'));
+    const parsed = EndpointsCatalog.safeParse(await res.json());
+    if (!parsed.success) return null;
+    return parsed.data.data.endpoints.some((e) => e.supported_parameters?.includes('structured_outputs'));
   } catch {
     return null;
   }
@@ -121,6 +134,7 @@ export async function openRouterStructuredOutputSupport(
 /** OpenRouter via API compatível com a OpenAI. Exportado para reuso com chave do usuário. */
 export function openRouterProvider(opts: { model: string; apiKey: string; baseURL?: string; fetch?: Fetch }): LlmProvider {
   const { model, apiKey, baseURL = OPENROUTER_BASE_URL, fetch: fetchImpl = globalThis.fetch } = opts;
+  assertSecureBaseUrl(baseURL);
   let support: Promise<boolean | null> | undefined;
   return openAiCompatibleProvider({
     name: 'openrouter',
@@ -129,8 +143,9 @@ export function openRouterProvider(opts: { model: string; apiKey: string; baseUR
     baseURL,
     fetch: fetchImpl,
     defaultHeaders: OPENROUTER_HEADERS,
-    // Sem isso o roteador pode mandar para um provedor que ignora `response_format`.
-    extraBody: { provider: { require_parameters: true } },
+    // `require_parameters`: sem isso o roteador pode mandar para um provedor que ignora `response_format`.
+    // `data_collection: 'deny'`: o pedido pode ter endereços; só provedores que não guardam nem treinam com o prompt.
+    extraBody: { provider: { require_parameters: true, data_collection: 'deny' } },
     async preflight() {
       support ??= openRouterStructuredOutputSupport(model, { apiKey, baseURL, fetch: fetchImpl });
       if ((await support) === false) throw new AiError(`${model} não tem saída estruturada em nenhum provedor do OpenRouter`);

@@ -53,7 +53,7 @@ describe('openRouterProvider', () => {
     expect(chat!.headers.get('x-openrouter-title')).toBe('Wayboo');
     expect(chat!.body).toMatchObject({
       model: MODEL,
-      provider: { require_parameters: true },
+      provider: { require_parameters: true, data_collection: 'deny' },
       response_format: { type: 'json_schema', json_schema: { name: 'route_brief', strict: true } },
     });
     // O catálogo é consultado uma vez só.
@@ -74,6 +74,49 @@ describe('openRouterProvider', () => {
     const p = openRouterProvider({ model: MODEL, apiKey: KEY, fetch: or.fetch });
 
     expect(await p.generateObject(args)).toEqual({ headline: 'ok', warnings: ['a'] });
+  });
+
+  it('trata catálogo malformado como indisponível', async () => {
+    // String no lugar de array: `includes` acharia "structured_outputs" como substring.
+    const malformed = () => json({ data: { endpoints: [{ supported_parameters: 'not_structured_outputs' }] } });
+    const or = fakeOpenRouter({ catalog: malformed, content: '{"headline":"ok","warnings":[]}' });
+    const p = openRouterProvider({ model: MODEL, apiKey: KEY, fetch: or.fetch });
+
+    expect(await p.generateObject(args)).toEqual({ headline: 'ok', warnings: [] });
+    expect(or.calls.some((c) => c.url.endsWith('/chat/completions'))).toBe(true);
+  });
+
+  it('recusa AI_BASE_URL em http:// fora de loopback', () => {
+    expect(() => openRouterProvider({ model: MODEL, apiKey: KEY, baseURL: 'http://proxy.example.com/v1' })).toThrow(/https/);
+    expect(() => openRouterProvider({ model: MODEL, apiKey: KEY, baseURL: 'http://localhost:8080/v1' })).not.toThrow();
+  });
+});
+
+describe('validação do ambiente de IA', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  async function configWith(vars: Record<string, string>) {
+    vi.stubEnv('AI_PROVIDER', 'openrouter');
+    vi.stubEnv('AI_MODEL', MODEL);
+    vi.stubEnv('OPENROUTER_API_KEY', KEY);
+    for (const [k, v] of Object.entries(vars)) vi.stubEnv(k, v);
+    vi.resetModules();
+    return import('../src/config');
+  }
+
+  it('recusa chave ou modelo só com espaços', async () => {
+    await expect(configWith({ OPENROUTER_API_KEY: '   ' })).rejects.toThrow(/OPENROUTER_API_KEY/);
+    await expect(configWith({ AI_MODEL: '   ' })).rejects.toThrow(/AI_MODEL/);
+  });
+
+  it('recusa AI_BASE_URL inválida sem expor a chave', async () => {
+    const err = await configWith({ AI_BASE_URL: 'nao-e-url' }).catch((e: Error) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/AI_BASE_URL/);
+    expect((err as Error).message).not.toContain(KEY);
   });
 });
 

@@ -1,4 +1,31 @@
+import { z } from 'zod';
+
 const env = process.env;
+
+/** Vazio ou só espaços conta como ausente; assim as checagens de obrigatório abaixo pegam `"   "`. */
+const optionalText = z
+  .string()
+  .trim()
+  .transform((v) => v || undefined)
+  .optional();
+
+const AiEnv = z.object({
+  AI_MODEL: optionalText,
+  AI_BASE_URL: optionalText.pipe(z.url().optional()),
+  OPENAI_API_KEY: optionalText,
+  OLLAMA_API_KEY: optionalText,
+  OPENROUTER_API_KEY: optionalText,
+});
+
+function parseAiEnv() {
+  const r = AiEnv.safeParse(env);
+  if (r.success) return r.data;
+  // Só o nome da variável: a mensagem não pode vazar a chave.
+  const names = [...new Set(r.error.issues.map((i) => String(i.path[0])))];
+  throw new Error(`Variável de ambiente inválida: ${names.join(', ')}`);
+}
+
+const aiEnv = parseAiEnv();
 
 export type AiProviderName = 'anthropic' | 'openai' | 'ollama' | 'openrouter' | 'none';
 
@@ -9,8 +36,8 @@ function detectProvider(): AiProviderName {
   if (explicit && (PROVIDERS as readonly string[]).includes(explicit)) return explicit as AiProviderName;
   if (explicit) throw new Error(`AI_PROVIDER inválido: ${explicit} (use ${PROVIDERS.join(' | ')})`);
   if (env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN) return 'anthropic';
-  if (env.OPENAI_API_KEY) return 'openai';
-  if (env.OPENROUTER_API_KEY) return 'openrouter';
+  if (aiEnv.OPENAI_API_KEY) return 'openai';
+  if (aiEnv.OPENROUTER_API_KEY) return 'openrouter';
   return 'none';
 }
 
@@ -22,9 +49,9 @@ const DEFAULT_BASE_URL: Partial<Record<AiProviderName, string>> = {
 };
 
 const API_KEY: Partial<Record<AiProviderName, string | undefined>> = {
-  openai: env.OPENAI_API_KEY,
-  ollama: env.OLLAMA_API_KEY ?? 'ollama',
-  openrouter: env.OPENROUTER_API_KEY,
+  openai: aiEnv.OPENAI_API_KEY,
+  ollama: aiEnv.OLLAMA_API_KEY ?? 'ollama',
+  openrouter: aiEnv.OPENROUTER_API_KEY,
 };
 
 export const config = {
@@ -38,8 +65,8 @@ export const config = {
   corsOrigin: env.CORS_ORIGIN ?? true,
   ai: {
     provider,
-    model: env.AI_MODEL ?? (provider === 'anthropic' ? 'claude-opus-5-5' : null),
-    baseUrl: env.AI_BASE_URL ?? DEFAULT_BASE_URL[provider],
+    model: aiEnv.AI_MODEL ?? (provider === 'anthropic' ? 'claude-opus-5-5' : null),
+    baseUrl: aiEnv.AI_BASE_URL ?? DEFAULT_BASE_URL[provider],
     apiKey: API_KEY[provider],
     timeoutMs: Number(env.AI_TIMEOUT_MS ?? 15000),
   },
