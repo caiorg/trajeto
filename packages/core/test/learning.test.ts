@@ -7,6 +7,7 @@ import {
   brazilNationalHolidays,
   decodePolyline,
   easterSunday,
+  estimateSegment,
   geohash,
   geohashCenter,
   haversine,
@@ -15,6 +16,7 @@ import {
   localTime,
   markVisitedStops,
   matchPlace,
+  observe,
   predictEta,
   predictTrips,
   PRIOR_WEIGHTS,
@@ -23,6 +25,7 @@ import {
   rerouteRequest,
   routeFeatures,
   simulateDrive,
+  statKey,
   tradeoffs,
   updatePreferences,
   type Coord,
@@ -295,6 +298,25 @@ describe('ETA aprendido', () => {
     expect(weekday.durationS / r.baseDurationS).toBeGreaterThan(1.8);
     expect(sunday.durationS / r.baseDurationS).toBeLessThan(1.15);
     expect(sunday.confidence).toBeLessThan(weekday.confidence);
+  });
+
+  it('sem dados no horário, usa a média do trecho no mesmo tipo de dia, somando horários distantes', () => {
+    const now = at(0, 12, 0);
+    const DAY = 86_400_000;
+    const user: StatsMap = new Map([
+      // Dia útil: 10h (peso 2, hoje) e 15h (peso 1, há 45 dias, vale metade).
+      [statKey.segBin('x', 'weekday', 20), observe(undefined, 0.6, now, 2)],
+      [statKey.segBin('x', 'weekday', 30), observe(undefined, 0.2, now - 45 * DAY, 1)],
+      // Outro tipo de dia e a média sem tipo de dia não entram.
+      [statKey.segBin('x', 'sunday', 10), observe(undefined, 2, now, 5)],
+      [statKey.seg('x'), observe(undefined, 2, now, 5)],
+    ]);
+    const e = estimateSegment('x', 'weekday', 10, user, new Map(), now);
+    // Pool: w = 2,5; média = 0,52; variância = 0,0256. Encolhe com k = 3 rumo a (0; 0,05).
+    expect(e.mean).toBeCloseTo((2.5 * 0.52) / 5.5, 6);
+    expect(e.variance).toBeCloseTo((2.5 * 0.0256 + 3 * 0.05) / 5.5, 6);
+    expect(e.userW).toBeCloseTo(0.5 * 2.5, 6);
+    expect(e.crowdW).toBe(0);
   });
 
   it('aprende o efeito da chuva a partir do resíduo das viagens', () => {
