@@ -378,6 +378,7 @@ const USER_TABLES: { table: string; where: string; columns?: string }[] = [
   { table: 'anomalies', where: 'user_id = ?' },
   { table: 'places', where: 'user_id = ?' },
   { table: 'routines', where: 'user_id = ?' },
+  { table: 'routine_routes', where: 'user_id = ?' },
   { table: 'prefs', where: 'user_id = ?' },
   { table: 'privacy', where: 'user_id = ?' },
   { table: 'alerts', where: 'reporter = ?' },

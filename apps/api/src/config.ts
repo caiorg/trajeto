@@ -41,11 +41,7 @@ const RetentionEnv = z.object({
   GPS_RETENTION_HOURS: optionalText.transform((v) => (v === undefined ? 24 : Number(v))).pipe(z.number().finite().nonnegative()),
 });
 
-function parseGpsRetentionHours(): number {
-  const r = RetentionEnv.safeParse(env);
-  if (!r.success) throw new Error('Variável de ambiente inválida: GPS_RETENTION_HOURS (use um número de horas maior ou igual a zero)');
-  return r.data.GPS_RETENTION_HOURS;
-}
+const retentionEnv = parseEnv(RetentionEnv);
 
 export type AiProviderName = 'anthropic' | 'openai' | 'ollama' | 'openrouter' | 'none';
 
@@ -90,7 +86,7 @@ export const config = {
     routeRadiusM: suggestionEnv.SUGGESTION_ROUTE_RADIUS_M ?? 250,
   },
   /** Horas que o rastro GPS de uma viagem encerrada fica no servidor. Ver docs/privacidade.md. */
-  gpsRetentionHours: parseGpsRetentionHours(),
+  gpsRetentionHours: retentionEnv.GPS_RETENTION_HOURS,
   ai: {
     provider,
     model: aiEnv.AI_MODEL ?? (provider === 'anthropic' ? 'claude-opus-5-5' : null),

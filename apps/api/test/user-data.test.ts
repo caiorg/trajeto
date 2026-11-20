@@ -113,6 +113,16 @@ describe('retenção dos rastros GPS', () => {
 });
 
 describe('dados do usuário', () => {
+  it('exportar e apagar cobrem toda tabela com user_id', () => {
+    const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[];
+    const withUser = tables
+      .map((t) => t.name)
+      .filter((name) => (db.prepare('SELECT 1 FROM pragma_table_info(?) WHERE name = ?').get(name, 'user_id') as unknown) !== undefined);
+    expect(withUser.length).toBeGreaterThan(0);
+    const covered = Object.keys(exportUserData('ninguem').tables);
+    for (const name of withUser) expect(covered, name).toContain(name);
+  });
+
   it('exige autenticação', async () => {
     expect((await app.inject({ method: 'GET', url: '/me/export' })).statusCode).toBe(401);
     expect((await app.inject({ method: 'DELETE', url: '/me' })).statusCode).toBe(401);
