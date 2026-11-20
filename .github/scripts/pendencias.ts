@@ -17,12 +17,16 @@ const LINEAR_PRIORITY_NAME = ['sem prioridade', 'Urgent', 'High', 'Medium', 'Low
 export function parsePendencias(prBody: string): Pendencia[] {
   const lines = prBody.replace(/\r\n/g, '\n').replace(/<!--[\s\S]*?-->/g, '').split('\n');
   // Linhas dentro de blocos de código (``` ou ~~~) nunca são título nem item: o PR pode mostrar o formato como exemplo.
-  let fence = false;
+  // Como no GFM, o bloco só fecha com o mesmo caractere, comprimento igual ou maior e nada depois.
+  let open: string | null = null;
   const fenced = lines.map((l) => {
-    const isFence = /^\s*(```|~~~)/.test(l);
-    const inside = fence || isFence;
-    if (isFence) fence = !fence;
-    return inside;
+    const delim = /^\s*(`{3,}|~{3,})(.*)$/.exec(l);
+    if (open === null) {
+      if (delim) open = delim[1];
+      return open !== null;
+    }
+    if (delim && delim[1][0] === open[0] && delim[1].length >= open.length && !delim[2].trim()) open = null;
+    return true;
   });
   const start = lines.findIndex((l, i) => !fenced[i] && /^##\s+pend[êe]ncias\s*$/i.test(l.trim()));
   if (start < 0) return [];
