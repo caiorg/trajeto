@@ -1,0 +1,208 @@
+// Transforma a seção "## Pendências" de um PR mergeado em issues e comentários.
+// Formato de cada item (linhas do corpo indentadas abaixo do item):
+//   - [ ] Título | AFK, enhancement | Medium   -> cria issue
+//   - [ ] #3                                   -> comenta na issue #3
+// Itens marcados ([x]) são ignorados.
+
+export type Priority = 'High' | 'Medium' | 'Low';
+
+export type Pendencia =
+  | { kind: 'issue'; title: string; labels: string[]; priority: Priority | null; body: string }
+  | { kind: 'comment'; issue: number; body: string };
+
+const PRIORITIES: Record<string, Priority> = { high: 'High', medium: 'Medium', low: 'Low' };
+const LINEAR_PRIORITY: Record<Priority, number> = { High: 2, Medium: 3, Low: 4 };
+
+export function parsePendencias(prBody: string): Pendencia[] {
+  const lines = prBody.replace(/\r\n/g, '\n').replace(/<!--[\s\S]*?-->/g, '').split('\n');
+  const start = lines.findIndex((l) => /^##\s+pend[êe]ncias\s*$/i.test(l.trim()));
+  if (start < 0) return [];
+
+  const items: { head: string; body: string[] }[] = [];
+  let current: { head: string; body: string[] } | null = null;
+  for (const line of lines.slice(start + 1)) {
+    if (/^#{1,2}\s/.test(line)) break;
+    const item = /^[-*]\s+\[([ xX])\]\s+(.+)$/.exec(line);
+    if (item) {
+      current = item[1] === ' ' ? { head: item[2].trim(), body: [] } : null;
+      if (current) items.push(current);
+    } else if (/^\S/.test(line)) {
+      current = null;
+    } else if (current) {
+      current.body.push(line);
+    }
+  }
+  return items.map(toPendencia).filter((p): p is Pendencia => p !== null);
+}
+
+function toPendencia({ head, body }: { head: string; body: string[] }): Pendencia | null {
+  const text = dedent(body).trim();
+  const [title = '', labels = '', priority = ''] = head.split('|').map((s) => s.trim());
+  const ref = /^#(\d+)$/.exec(title);
+  if (ref) return text ? { kind: 'comment', issue: Number(ref[1]), body: text } : null;
+  if (!title) return null;
+  return {
+    kind: 'issue',
+    title,
+    labels: labels.split(',').map((s) => s.trim()).filter(Boolean),
+    priority: PRIORITIES[priority.toLowerCase()] ?? null,
+    body: text,
+  };
+}
+
+function dedent(lines: string[]): string {
+  const indents = lines.filter((l) => l.trim()).map((l) => l.length - l.trimStart().length);
+  const min = indents.length ? Math.min(...indents) : 0;
+  return lines.map((l) => l.slice(min)).join('\n');
+}
+
+export const marker = (pr: number) => `<!-- pendencia-do-pr: ${pr} -->`;
+
+type Issue = { number: number; title: string; state: string; body: string | null; pull_request?: unknown };
+
+function github(token: string, repository: string, apiUrl: string) {
+  const base = `${apiUrl}/repos/${repository}`;
+  async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
+    const res = await fetch(base + path, {
+      ...init,
+      headers: {
+        authorization: `Bearer ${token}`,
+        accept: 'application/vnd.github+json',
+        'content-type': 'application/json',
+        'x-github-api-version': '2022-11-28',
+      },
+    });
+    if (!res.ok) throw new Error(`${init.method ?? 'GET'} ${path}: ${res.status} ${await res.text()}`);
+    return (await res.json()) as T;
+  }
+  async function all<T>(path: string): Promise<T[]> {
+    const out: T[] = [];
+    for (let page = 1; ; page++) {
+      const batch = await call<T[]>(`${path}${path.includes('?') ? '&' : '?'}per_page=100&page=${page}`);
+      out.push(...batch);
+      if (batch.length < 100) return out;
+    }
+  }
+  const post = <T>(path: string, data: unknown) => call<T>(path, { method: 'POST', body: JSON.stringify(data) });
+  return {
+    labels: async () => (await all<{ name: string }>('/labels')).map((l) => l.name),
+    issues: async () => (await all<Issue>('/issues?state=all')).filter((i) => !i.pull_request),
+    comments: (n: number) => all<{ body: string | null }>(`/issues/${n}/comments`),
+    createIssue: (data: { title: string; body: string; labels: string[] }) =>
+      post<{ number: number; html_url: string }>('/issues', data),
+    comment: (n: number, body: string) => post<unknown>(`/issues/${n}/comments`, { body }),
+  };
+}
+
+// O sync do Linear cria o item em Backlog e sem prioridade; aqui ele vai para Todo com a prioridade do PR.
+async function updateLinear(apiKey: string, issueUrl: string, priority: Priority | null): Promise<string> {
+  const gql = async <T>(query: string, variables: Record<string, unknown>): Promise<T> => {
+    const res = await fetch('https://api.linear.app/graphql', {
+      method: 'POST',
+      headers: { authorization: apiKey, 'content-type': 'application/json' },
+      body: JSON.stringify({ query, variables }),
+    });
+    const json = (await res.json()) as { data?: T; errors?: { message: string }[] };
+    if (!res.ok || json.errors) throw new Error(json.errors?.map((e) => e.message).join('; ') ?? `HTTP ${res.status}`);
+    return json.data as T;
+  };
+  type Found = {
+    attachmentsForURL: {
+      nodes: { issue: { id: string; identifier: string; team: { states: { nodes: { id: string }[] } } } | null }[];
+    };
+  };
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const found = await gql<Found>(
+      `query($url: String!) { attachmentsForURL(url: $url) { nodes { issue { id identifier
+        team { states(filter: { name: { eq: "Todo" } }) { nodes { id } } } } } } }`,
+      { url: issueUrl },
+    );
+    const issue = found.attachmentsForURL.nodes.find((n) => n.issue)?.issue;
+    if (issue) {
+      const input: Record<string, unknown> = {};
+      const stateId = issue.team.states.nodes[0]?.id;
+      if (stateId) input.stateId = stateId;
+      if (priority) input.priority = LINEAR_PRIORITY[priority];
+      await gql(`mutation($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success } }`, {
+        id: issue.id,
+        input,
+      });
+      return issue.identifier;
+    }
+    await Bun.sleep(5000);
+  }
+  throw new Error('o item não apareceu no Linear em 60s');
+}
+
+async function main() {
+  const env = (name: string) => {
+    const value = process.env[name];
+    if (!value) throw new Error(`falta ${name}`);
+    return value;
+  };
+  const event = JSON.parse(await Bun.file(env('GITHUB_EVENT_PATH')).text());
+  const pr: { number: number; body: string | null } = event.pull_request;
+  const items = parsePendencias(pr.body ?? '');
+  if (!items.length) {
+    console.log('PR sem pendências.');
+    return;
+  }
+
+  const gh = github(env('GITHUB_TOKEN'), env('GITHUB_REPOSITORY'), process.env.GITHUB_API_URL ?? 'https://api.github.com');
+  const linearKey = process.env.LINEAR_API_KEY;
+  const tag = marker(pr.number);
+  const known = new Set(await gh.labels());
+  const issues = await gh.issues();
+  const done: string[] = [];
+  const warnings: string[] = [];
+
+  for (const item of items) {
+    if (item.kind === 'comment') {
+      const body = `${item.body}\n\nRegistrado no merge do #${pr.number}.\n${tag}`;
+      const existing = await gh.comments(item.issue);
+      if (existing.some((c) => c.body === body)) continue;
+      await gh.comment(item.issue, body);
+      done.push(`- comentário em #${item.issue}`);
+      continue;
+    }
+
+    const title = item.title.toLowerCase();
+    const sameTitle = issues.filter((i) => i.title.toLowerCase() === title);
+    if (sameTitle.some((i) => i.body?.includes(tag))) continue; // já criada por uma execução anterior
+    const dup = sameTitle.find((i) => i.state === 'open');
+    if (dup) {
+      warnings.push(`- "${item.title}" já existe em #${dup.number}; não criei outra.`);
+      continue;
+    }
+    const labels = item.labels.filter((l) => known.has(l));
+    const unknown = item.labels.filter((l) => !known.has(l));
+    if (unknown.length) warnings.push(`- "${item.title}": labels inexistentes ignoradas: ${unknown.join(', ')}.`);
+    const body = `${item.body}\n\n---\nRegistrada no merge do #${pr.number}.\n${tag}`;
+    const created = await gh.createIssue({ title: item.title, body, labels });
+    issues.push({ number: created.number, title: item.title, state: 'open', body });
+
+    let linear = '';
+    if (linearKey) {
+      try {
+        linear = ` (${await updateLinear(linearKey, created.html_url, item.priority)}, ${item.priority ?? 'sem prioridade'})`;
+      } catch (e) {
+        warnings.push(`- #${created.number}: não atualizei o Linear: ${(e as Error).message}.`);
+      }
+    } else if (item.priority) {
+      warnings.push(`- #${created.number}: sem \`LINEAR_API_KEY\`, a prioridade ${item.priority} não foi aplicada.`);
+    }
+    done.push(`- #${created.number} ${item.title}${linear}`);
+  }
+
+  if (!done.length && !warnings.length) return;
+  const summary = [
+    'Pendências registradas no merge:',
+    ...(done.length ? done : ['- nenhuma nova']),
+    ...(warnings.length ? ['', 'Avisos:', ...warnings] : []),
+  ].join('\n');
+  console.log(summary);
+  if (!done.length && (await gh.comments(pr.number)).some((c) => c.body?.startsWith(summary.split('\n')[0]))) return;
+  await gh.comment(pr.number, summary);
+}
+
+if (import.meta.main) await main();
