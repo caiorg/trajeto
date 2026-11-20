@@ -1,6 +1,8 @@
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { openRouterProvider } from '../src/ai/providers';
+import { openRouterProvider, openRouterStructuredOutputSupport } from '../src/ai/providers';
 
 const MODEL = 'openai/gpt-4o-mini';
 const KEY = 'sk-or-test';
@@ -86,6 +88,34 @@ describe('openRouterProvider', () => {
 
     expect(await p.generateObject(args)).toEqual({ headline: 'ok', warnings: [] });
     expect(or.calls.some((c) => c.url.endsWith('/chat/completions'))).toBe(true);
+  });
+
+  it('não segue redirecionamento 307/308 para outro servidor', async () => {
+    // Servidores locais de verdade: o fetch nativo seguiria o redirect se a opção faltasse.
+    const listen = (handler: Parameters<typeof createServer>[1]) =>
+      new Promise<Server>((resolve) => {
+        const server = createServer(handler);
+        server.listen(0, '127.0.0.1', () => resolve(server));
+      });
+    const urlOf = (server: Server) => `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const received: string[] = [];
+    const target = await listen((req, res) => {
+      received.push(`${req.method} ${req.url} ${req.headers.authorization ?? ''}`);
+      res.end('{}');
+    });
+    const origin = await listen((req, res) => {
+      res.writeHead(req.url?.endsWith('/endpoints') ? 307 : 308, { location: `${urlOf(target)}${req.url}` });
+      res.end();
+    });
+    try {
+      const baseURL = `${urlOf(origin)}/api/v1`;
+      expect(await openRouterStructuredOutputSupport(MODEL, { apiKey: KEY, baseURL })).toBeNull();
+      await expect(openRouterProvider({ model: MODEL, apiKey: KEY, baseURL }).generateObject(args)).rejects.toThrow();
+      expect(received).toEqual([]);
+    } finally {
+      origin.close();
+      target.close();
+    }
   });
 
   it('recusa AI_BASE_URL em http:// fora de loopback', () => {

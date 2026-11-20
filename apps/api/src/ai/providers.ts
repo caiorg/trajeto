@@ -121,6 +121,8 @@ export async function openRouterStructuredOutputSupport(
     const res = await fetchImpl(`${baseURL.replace(/\/$/, '')}/models/${model}/endpoints`, {
       headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
       signal: AbortSignal.timeout(config.ai.timeoutMs),
+      // Redirect levaria a chave a um destino não validado; o erro cai no catch e conta como catálogo indisponível.
+      redirect: 'error',
     });
     if (!res.ok) return null;
     const parsed = EndpointsCatalog.safeParse(await res.json());
