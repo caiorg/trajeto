@@ -170,9 +170,21 @@ export function createNavigator(route: Route, opts: NavigatorOptions = {}) {
   const lastWithin = (p: LatLon, distM: number, fromM = 0): number | null => {
     const pt: Coord = [p.lon, p.lat];
     for (let j = coords.length - 2; j >= 0 && cum[j + 1]! >= fromM; j--) {
-      const q = projectOnPolyline(coords, cum, pt, j, j + 1);
-      if (q.offsetM > distM) continue;
-      const leave = Math.min(cum[j + 1]!, q.alongM + Math.sqrt(distM ** 2 - q.offsetM ** 2));
+      const len = cum[j + 1]! - cum[j]!;
+      const da = haversine(coords[j]!, pt);
+      if (len === 0) {
+        if (da <= distM && cum[j]! >= fromM) return cum[j]!;
+        continue;
+      }
+      // Pé da perpendicular na reta do trecho (sem limitar ao trecho) e distância até ela.
+      const db = haversine(coords[j + 1]!, pt);
+      const u = (da ** 2 - db ** 2 + len ** 2) / (2 * len);
+      const h2 = distM ** 2 - (da ** 2 - u ** 2);
+      if (h2 < 0) continue;
+      const h = Math.sqrt(h2);
+      // O círculo de raio `distM` corta a reta em [u - h, u + h]; vale a parte dentro do trecho.
+      if (u - h > len || u + h < 0) continue;
+      const leave = cum[j]! + Math.min(len, u + h);
       if (leave >= fromM) return leave;
     }
     return null;

@@ -480,6 +480,17 @@ describe('navegação', () => {
     stops = markVisitedStops(stops, fix, { alongM: nav.update(fix).alongM, project: nav.project, lastWithin: nav.lastWithin });
     expect(stops[0]!.visited).toBe(false);
   });
+  it('avanço marca parada logo antes de um vértice da rota', () => {
+    // No equador, a parada fica a 111 m e o vértice seguinte 40 m depois dela.
+    const geometry: Coord[] = [[-0.001, 0], [0.00036, 0], [0.001, 0]];
+    const nav = createNavigator({ ...makeRoute('r', HOME, WORK), geometry });
+    let stops: TripStop[] = [{ lat: 0, lon: 0, visited: false }];
+
+    // ~60 m depois da parada: já passou do raio de 50 m.
+    const fix = { t: 0, lat: 0, lon: 0.00054, accuracy: 5 };
+    stops = markVisitedStops(stops, fix, { alongM: nav.update(fix).alongM, project: nav.project, lastWithin: nav.lastWithin });
+    expect(stops[0]!.visited).toBe(true);
+  });
 });
 
 function mulberry(seed: number) {
