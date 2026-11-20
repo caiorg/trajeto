@@ -148,6 +148,9 @@ describe('feriados', () => {
   it('só aplica o calendário brasileiro em fusos do Brasil e aceita calendário próprio', () => {
     expect(localTime(at(0, 8, 0), 'America/New_York').holiday).toBeNull();
     expect(localTime(at(0, 8, 0), 'America/Manaus').holiday).toBe('Finados');
+    // Intl aceita o fuso sem diferenciar maiúsculas; o calendário também precisa aceitar.
+    expect(localTime(at(0, 8, 0), 'america/sao_paulo')).toMatchObject({ dayType: 'sunday', holiday: 'Finados' });
+    expect(localTime(at(0, 8, 0), 'america/new_york').holiday).toBeNull();
     // Ponto de extensão para feriados estaduais e municipais.
     const sp = (d: { month: number; day: number }) => (d.month === 1 && d.day === 25 ? 'Aniversário de São Paulo' : null);
     const lt = localTime(Date.UTC(2027, 0, 25, 11, 0), TZ, sp);
