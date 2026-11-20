@@ -1,4 +1,5 @@
 import type { DayType } from '../types';
+import { holidayCalendarFor, type HolidayCalendar } from './holidays';
 
 /**
  * Média e variância ponderadas com decaimento exponencial.
@@ -93,9 +94,17 @@ const formatters = new Map<string, Intl.DateTimeFormat>();
 const WEEKDAYS: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
 
 export interface LocalTime {
+  year: number;
+  /** 1..12 */
+  month: number;
+  day: number;
+  /** Dia da semana real (0 = domingo), mesmo em feriado. */
   dow: number;
   minuteOfDay: number;
+  /** Feriado conta como domingo: o trânsito se parece mais com o de domingo que com o de dia útil. */
   dayType: DayType;
+  /** Nome do feriado, ou null. */
+  holiday: string | null;
   /** Bin de 30 min (0..47) */
   bin: number;
 }
@@ -103,11 +112,22 @@ export interface LocalTime {
 export const BIN_MINUTES = 30;
 export const BINS_PER_DAY = (24 * 60) / BIN_MINUTES;
 
-export function localTime(epochMs: number, timeZone: string): LocalTime {
+/**
+ * Converte um instante para o tempo local do fuso.
+ * `calendar` define os feriados; o padrão vem do fuso (nacional brasileiro nos fusos do Brasil).
+ */
+export function localTime(
+  epochMs: number,
+  timeZone: string,
+  calendar: HolidayCalendar = holidayCalendarFor(timeZone),
+): LocalTime {
   let fmt = formatters.get(timeZone);
   if (!fmt) {
     fmt = new Intl.DateTimeFormat('en-US', {
       timeZone,
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
       weekday: 'short',
       hour: '2-digit',
       minute: '2-digit',
@@ -118,10 +138,14 @@ export function localTime(epochMs: number, timeZone: string): LocalTime {
   const parts = Object.fromEntries(fmt.formatToParts(new Date(epochMs)).map((p) => [p.type, p.value]));
   const dow = WEEKDAYS[parts.weekday ?? 'Mon'] ?? 1;
   const minuteOfDay = Number(parts.hour) * 60 + Number(parts.minute);
+  const date = { year: Number(parts.year), month: Number(parts.month), day: Number(parts.day) };
+  const holiday = calendar(date);
   return {
+    ...date,
     dow,
     minuteOfDay,
-    dayType: dow === 0 ? 'sunday' : dow === 6 ? 'saturday' : 'weekday',
+    dayType: holiday || dow === 0 ? 'sunday' : dow === 6 ? 'saturday' : 'weekday',
+    holiday,
     bin: Math.floor(minuteOfDay / BIN_MINUTES),
   };
 }

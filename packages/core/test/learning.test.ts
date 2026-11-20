@@ -4,7 +4,9 @@ import {
   buildSegments,
   createNavigator,
   cumulativeDistances,
+  brazilNationalHolidays,
   decodePolyline,
+  easterSunday,
   geohash,
   geohashCenter,
   haversine,
@@ -93,9 +95,69 @@ describe('geo', () => {
   });
 
   it('localTime respeita fuso e tipo de dia', () => {
-    const lt = localTime(at(0, 8, 15), TZ);
-    expect(lt).toMatchObject({ dayType: 'weekday', bin: 16, minuteOfDay: 495 });
+    const lt = localTime(at(1, 8, 15), TZ);
+    expect(lt).toMatchObject({ dayType: 'weekday', bin: 16, minuteOfDay: 495, holiday: null });
+    expect(lt).toMatchObject({ year: 2026, month: 11, day: 3 });
     expect(localTime(at(5, 10, 0), TZ).dayType).toBe('saturday');
+  });
+});
+
+describe('feriados', () => {
+  const ymd = (d: { year: number; month: number; day: number }) =>
+    `${d.year}-${String(d.month).padStart(2, '0')}-${String(d.day).padStart(2, '0')}`;
+
+  it('calcula a Páscoa', () => {
+    const cases: [number, string][] = [
+      [2024, '2024-03-31'],
+      [2025, '2025-04-20'],
+      [2026, '2026-04-05'],
+      [2027, '2027-03-28'],
+      [2038, '2038-04-25'],
+      [2285, '2285-03-22'],
+    ];
+    for (const [year, expected] of cases) expect(ymd(easterSunday(year))).toBe(expected);
+  });
+
+  it('lista os feriados nacionais, fixos e móveis', () => {
+    const list = brazilNationalHolidays(2026).map((h) => `${ymd(h.date)} ${h.name}`);
+    expect(list).toEqual([
+      '2026-01-01 Confraternização Universal',
+      '2026-02-16 Carnaval',
+      '2026-02-17 Carnaval',
+      '2026-04-03 Sexta-feira Santa',
+      '2026-04-21 Tiradentes',
+      '2026-05-01 Dia do Trabalho',
+      '2026-06-04 Corpus Christi',
+      '2026-09-07 Independência do Brasil',
+      '2026-10-12 Nossa Senhora Aparecida',
+      '2026-11-02 Finados',
+      '2026-11-15 Proclamação da República',
+      '2026-11-20 Dia Nacional de Zumbi e da Consciência Negra',
+      '2026-12-25 Natal',
+    ]);
+    // Consciência Negra virou feriado nacional em 2024 (Lei 14.759/2023).
+    expect(brazilNationalHolidays(2023).some((h) => h.date.month === 11 && h.date.day === 20)).toBe(false);
+  });
+
+  it('localTime trata feriado como domingo, no dia local do fuso', () => {
+    // 2026-11-02 (Finados) é segunda.
+    const finados = localTime(at(0, 8, 0), TZ);
+    expect(finados).toMatchObject({ dow: 1, dayType: 'sunday', holiday: 'Finados' });
+    // 23h30 de 01/11 em Brasília já é 02/11 em UTC; ainda não é feriado no fuso local.
+    expect(localTime(at(-1, 23, 30), TZ)).toMatchObject({ dayType: 'sunday', holiday: null });
+    expect(localTime(at(1, 0, 30), TZ)).toMatchObject({ dayType: 'weekday', holiday: null });
+  });
+
+  it('só aplica o calendário brasileiro em fusos do Brasil e aceita calendário próprio', () => {
+    expect(localTime(at(0, 8, 0), 'America/New_York').holiday).toBeNull();
+    expect(localTime(at(0, 8, 0), 'America/Manaus').holiday).toBe('Finados');
+    // Intl aceita o fuso sem diferenciar maiúsculas; o calendário também precisa aceitar.
+    expect(localTime(at(0, 8, 0), 'america/sao_paulo')).toMatchObject({ dayType: 'sunday', holiday: 'Finados' });
+    expect(localTime(at(0, 8, 0), 'america/new_york').holiday).toBeNull();
+    // Ponto de extensão para feriados estaduais e municipais.
+    const sp = (d: { month: number; day: number }) => (d.month === 1 && d.day === 25 ? 'Aniversário de São Paulo' : null);
+    const lt = localTime(Date.UTC(2027, 0, 25, 11, 0), TZ, sp);
+    expect(lt).toMatchObject({ dow: 1, dayType: 'sunday', holiday: 'Aniversário de São Paulo' });
   });
 });
 
@@ -177,6 +239,37 @@ describe('ETA aprendido', () => {
     expect(peak.confidence).toBeGreaterThan(0.6);
     expect(peak.p10S).toBeLessThan(peak.durationS);
     expect(peak.p90S).toBeGreaterThan(peak.durationS);
+
+  });
+
+  it('num feriado de segunda, o ETA de pico segue o padrão de domingo, não o de dia útil', () => {
+    const r = makeRoute('r', HOME, WORK);
+    const rnd = mulberry(11);
+    const user: StatsMap = new Map();
+    const crowd: StatsMap = new Map();
+    const drive = (depart: number, factor: number) => {
+      const truth = r.segments.map((s) => s.baseDurationS * factor * (0.95 + rnd() * 0.1));
+      const trace = analyzeTrace(r, [...simulateDrive(r, truth, depart, 1, 3, rnd)]);
+      const learned = learnFromTrip({ route: r, observations: trace.observations, departAt: depart, timeZone: TZ, user, crowd, ctx: NO_CTX });
+      for (const [k, v] of learned.user) user.set(k, v);
+      for (const [k, v] of learned.crowd) crowd.set(k, v);
+    };
+    // Quatro semanas de janeiro/2027: pico 2x nos dias úteis, trânsito livre aos domingos.
+    const jan = (day: number, hh: number) => Date.UTC(2027, 0, day, hh + 3, 0);
+    for (let day = 4; day <= 31; day++) {
+      const lt = localTime(jan(day, 8), TZ);
+      if (lt.dayType === 'weekday') drive(jan(day, 8), 2);
+      else if (lt.dayType === 'sunday') drive(jan(day, 8), 1);
+    }
+    const peak = (epoch: number) => predictEta({ route: r, departAt: epoch, timeZone: TZ, user, crowd, ctx: NO_CTX });
+    const carnavalAt = Date.UTC(2027, 1, 8, 11, 0);
+    expect(localTime(carnavalAt, TZ)).toMatchObject({ dow: 1, dayType: 'sunday', holiday: 'Carnaval' });
+    const monday = peak(Date.UTC(2027, 1, 1, 11, 0));
+    const sunday = peak(Date.UTC(2027, 1, 7, 11, 0));
+    const carnaval = peak(carnavalAt);
+    expect(monday.durationS / r.baseDurationS).toBeGreaterThan(1.8);
+    expect(carnaval.durationS).toBeLessThan(monday.durationS * 0.7);
+    expect(carnaval.durationS / sunday.durationS).toBeCloseTo(1, 1);
   });
 
   it('aprende o efeito da chuva a partir do resíduo das viagens', () => {

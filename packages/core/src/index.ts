@@ -6,6 +6,7 @@ export * from './navigation';
 export * from './simulate';
 export * from './api';
 export * from './learning/stats';
+export * from './learning/holidays';
 export * from './learning/eta';
 export * from './learning/traces';
 export * from './learning/preferences';
