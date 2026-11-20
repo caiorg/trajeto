@@ -1,6 +1,8 @@
+import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../src/app';
-import { db, exportUserData, purgeExpiredTraces, type UserDataExport } from '../src/db';
+import { config } from '../src/config';
+import { db, exportUserData, purgeExpiredTraces, saveRoutineRoutes, type UserDataExport } from '../src/db';
 import { client, makeRoute } from './helpers';
 
 const ROUTE = makeRoute();
@@ -112,6 +114,21 @@ describe('retenção dos rastros GPS', () => {
     expect(alertExists(gone.id)).toBe(false);
     expect(count('SELECT COUNT(*) AS n FROM alert_votes WHERE alert_id = ?', gone.id)).toBe(0);
     expect(alertExists(kept.id)).toBe(true);
+  });
+
+  it('apaga as rotas guardadas vencidas sem consulta a /suggestions e mantém as recentes', () => {
+    const now = Date.now();
+    const maxAge = config.suggestions.routeMaxAgeMs;
+    const p = { lat: -23.56, lon: -46.65 };
+    const [old, recent] = [randomUUID(), randomUUID()];
+    saveRoutineRoutes(old, 'a', 'b', { from: p, to: p, fetchedAt: now - maxAge - 1, routes: [] });
+    saveRoutineRoutes(recent, 'a', 'b', { from: p, to: p, fetchedAt: now - maxAge + HOUR_MS, routes: [] });
+
+    const purged = purgeExpiredTraces(DAY_MS, now);
+
+    expect(purged.routineRoutes).toBe(1);
+    expect(count('SELECT COUNT(*) AS n FROM routine_routes WHERE user_id = ?', old)).toBe(0);
+    expect(count('SELECT COUNT(*) AS n FROM routine_routes WHERE user_id = ?', recent)).toBe(1);
   });
 });
 

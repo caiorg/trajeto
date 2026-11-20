@@ -196,10 +196,13 @@ export interface RoutineRoutes {
   routes: Route[];
 }
 
+/** Passada a idade máxima a rota não é mais reaproveitada; não há motivo para guardar a localização. */
+const purgeExpiredRoutineRoutes = (now: number) =>
+  Number(db.prepare('DELETE FROM routine_routes WHERE fetched_at < ?').run(now - config.suggestions.routeMaxAgeMs).changes);
+
 export function getRoutineRoutes(userId: string, originId: string, destId: string): RoutineRoutes | null {
-  // Passada a idade máxima a rota não é mais reaproveitada; não há motivo para guardar a localização.
-  // Roda a cada leitura, então a limpeza não depende de o roteador responder e uma rota nova ser gravada.
-  db.prepare('DELETE FROM routine_routes WHERE fetched_at < ?').run(Date.now() - config.suggestions.routeMaxAgeMs);
+  // Também roda a cada leitura, então a limpeza não depende de o roteador responder e uma rota nova ser gravada.
+  purgeExpiredRoutineRoutes(Date.now());
   const r = db.prepare('SELECT * FROM routine_routes WHERE user_id = ? AND origin_id = ? AND dest_id = ?').get(userId, originId, destId) as
     | Row
     | undefined;
@@ -342,8 +345,12 @@ const ABANDONED_TRIP_MS = 86_400_000;
  * de `retentionMs`. Depois do encerramento, o aprendizado só usa as estatísticas por trecho, que ficam.
  * Viagem ativa só perde o rastro depois de abandonada, para o prazo curto não cortar uma viagem em curso.
  * Alertas expirados há mais de `retentionMs` saem com os votos: guardam coordenada, horário e autor.
+ * Rotas guardadas das rotinas saem ao passar de `SUGGESTION_ROUTE_MAX_AGE_MIN`, mesmo sem consulta a `/suggestions`.
  */
-export function purgeExpiredTraces(retentionMs: number, now = Date.now()): { samples: number; plans: number; alerts: number } {
+export function purgeExpiredTraces(
+  retentionMs: number,
+  now = Date.now(),
+): { samples: number; plans: number; alerts: number; routineRoutes: number } {
   const cutoff = now - retentionMs;
   const abandonedCutoff = now - Math.max(retentionMs, ABANDONED_TRIP_MS);
   // Ativa: abandono conta do último envio de amostras pelo relógio do servidor, não da idade da viagem
@@ -357,7 +364,8 @@ export function purgeExpiredTraces(retentionMs: number, now = Date.now()): { sam
       .run(cutoff, cutoff, abandonedCutoff);
     db.prepare('DELETE FROM alert_votes WHERE alert_id IN (SELECT id FROM alerts WHERE expires_at < ?)').run(cutoff);
     const alerts = db.prepare('DELETE FROM alerts WHERE expires_at < ?').run(cutoff);
-    return { samples: Number(samples.changes), plans: Number(plans.changes), alerts: Number(alerts.changes) };
+    const routineRoutes = purgeExpiredRoutineRoutes(now);
+    return { samples: Number(samples.changes), plans: Number(plans.changes), alerts: Number(alerts.changes), routineRoutes };
   });
 }
 

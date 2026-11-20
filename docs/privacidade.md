@@ -17,7 +17,7 @@ O app gera um token aleatório de 256 bits e o registra em `POST /auth/device`. 
 | `anomalies` | Trecho, momento, tempo esperado e observado quando a diferença foi grande | Registro; hoje só a contagem aparece no fim da viagem | Até o usuário apagar |
 | `places` | Lugares frequentes (coordenada, nome dado pelo usuário, se é casa ou trabalho, contagem de visitas) | Sugerir destinos e reconhecer rotinas | Até o usuário apagar |
 | `routines` | Histograma de horários de saída por origem, destino e tipo de dia | Sugestões de saída | Até o usuário apagar |
-| `routine_routes` | Rotas sugeridas para cada rotina, com os pontos de origem e destino pedidos | Reaproveitar a rota habitual em `/suggestions` sem chamar o roteador | Vence em `SUGGESTION_ROUTE_MAX_AGE_MIN` (padrão 24 horas) e sai na próxima consulta de sugestões de qualquer usuário |
+| `routine_routes` | Rotas sugeridas para cada rotina, com os pontos de origem e destino pedidos | Reaproveitar a rota habitual em `/suggestions` sem chamar o roteador | Vence em `SUGGESTION_ROUTE_MAX_AGE_MIN` (padrão 24 horas) e sai na rodada de limpeza seguinte (a cada hora) ou antes, na próxima consulta de sugestões de qualquer usuário |
 | `prefs` | Pesos aprendidos das escolhas de rota (tempo, distância, pedágio, rodovia, curvas, familiaridade) | Ordenar as rotas sugeridas | Até o usuário apagar |
 | `privacy` | Opt-in do aprendizado coletivo | Decidir se a viagem soma ao agregado | Até o usuário apagar |
 | `alerts` | Alertas que o usuário criou (tipo, coordenada, horário) | Mostrar o alerta para a comunidade | Some do mapa ao expirar (30 min a 180 dias, conforme o tipo); a linha e os votos saem `GPS_RETENTION_HOURS` horas depois |
@@ -35,4 +35,4 @@ Com o opt-in de `PUT /privacy` ligado, a viagem soma ao usuário agregado (`user
 
 ## Configuração
 
-`GPS_RETENTION_HOURS` define o prazo do rastro GPS, dos planos e dos alertas expirados (padrão `24`, que também vale para valor vazio; `0` apaga na próxima rodada). Valor não numérico ou negativo impede o servidor de subir. A rotina roda ao subir o servidor e a cada hora (`apps/api/src/server.ts`).
+`GPS_RETENTION_HOURS` define o prazo do rastro GPS, dos planos e dos alertas expirados (padrão `24`, que também vale para valor vazio; `0` apaga na próxima rodada). Valor não numérico ou negativo impede o servidor de subir. A rotina roda ao subir o servidor e a cada hora (`apps/api/src/server.ts`) e também apaga as rotas de `routine_routes` vencidas.
