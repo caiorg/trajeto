@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import {
   PRIOR_WEIGHTS,
@@ -68,6 +68,8 @@ CREATE TABLE IF NOT EXISTS alert_votes (alert_id TEXT NOT NULL, user_id TEXT NOT
 CREATE TABLE IF NOT EXISTS anomalies (
   user_id TEXT NOT NULL, seg TEXT NOT NULL, at INTEGER NOT NULL, expected_s REAL NOT NULL, observed_s REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS devices (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, created_at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS devices_user ON devices(user_id);
 `);
 
 type Row = Record<string, string | number | null>;
@@ -181,6 +183,30 @@ export function savePrefs(userId: string, weights: PreferenceWeights, updates: n
     `INSERT INTO prefs (user_id, weights, updates) VALUES (?, ?, ?)
      ON CONFLICT(user_id) DO UPDATE SET weights = excluded.weights, updates = excluded.updates`,
   ).run(userId, JSON.stringify(weights), updates);
+}
+
+// ---------- aparelhos ----------
+
+const hashToken = (token: string) => createHash('sha256').update(token).digest('hex');
+
+/**
+ * Cria um aparelho com token aleatório de 256 bits; o banco guarda só o hash.
+ * `legacyUserId` é o UUID que o app enviava em `x-user-id`: o servidor adota esse id
+ * (e os dados gravados nele) se nenhum aparelho o reivindicou antes. Senão, cria um usuário novo.
+ */
+export function registerDevice(legacyUserId?: string): { userId: string; token: string } {
+  const token = randomBytes(32).toString('base64url');
+  return transaction(() => {
+    const claimed = legacyUserId !== undefined && db.prepare('SELECT 1 FROM devices WHERE user_id = ?').get(legacyUserId) !== undefined;
+    const userId = legacyUserId !== undefined && !claimed ? legacyUserId : randomUUID();
+    db.prepare('INSERT INTO devices (token_hash, user_id, created_at) VALUES (?, ?, ?)').run(hashToken(token), userId, Date.now());
+    return { userId, token };
+  });
+}
+
+export function userOfToken(token: string): string | null {
+  const r = db.prepare('SELECT user_id FROM devices WHERE token_hash = ?').get(hashToken(token)) as Row | undefined;
+  return r ? String(r.user_id) : null;
 }
 
 // ---------- privacidade ----------

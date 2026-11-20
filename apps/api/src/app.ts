@@ -18,21 +18,33 @@ import { z, ZodError } from 'zod';
 import { briefPlan, narrateInsights } from './ai/planner';
 import { llm } from './ai/providers';
 import { config } from './config';
-import { alertsInBox, db, getPlaces, getPlan, getPrefs, getShareCrowd, setShareCrowd, toAlert, upsertPlace } from './db';
+import {
+  alertsInBox,
+  db,
+  getPlaces,
+  getPlan,
+  getPrefs,
+  getShareCrowd,
+  registerDevice,
+  setShareCrowd,
+  toAlert,
+  upsertPlace,
+  userOfToken,
+} from './db';
 import { geocode, reverseGeocode } from './providers/geo-services';
 import { HttpError } from './providers/http';
 import { assistant, insights, suggestions } from './services/assistant';
 import { plan } from './services/planning';
 import { addSamples, finishTrip, rerouteTrip, startTrip } from './services/trips';
 
-/**
- * MVP sem login: o app gera um UUID por instalação e envia em `x-user-id`.
- * Trocar por autenticação real antes de expor publicamente.
- */
+/** Token do aparelho emitido por `POST /auth/device`: 32 bytes em base64url. */
+const BEARER = /^Bearer ([A-Za-z0-9_-]{43})$/;
+
 function userOf(req: FastifyRequest): string {
-  const id = z.string().uuid().safeParse(req.headers['x-user-id']);
-  if (!id.success) throw new HttpError(401, 'Cabeçalho x-user-id ausente ou inválido');
-  return id.data;
+  const m = BEARER.exec(req.headers.authorization ?? '');
+  const userId = m ? userOfToken(m[1]!) : null;
+  if (!userId) throw new HttpError(401, 'Token de autenticação ausente ou inválido');
+  return userId;
 }
 
 const tzOf = (req: FastifyRequest) => z.string().min(1).max(64).catch('America/Sao_Paulo').parse(req.headers['x-time-zone']);
@@ -82,6 +94,11 @@ export async function buildApp(opts: { logger?: boolean } = {}) {
   });
 
   app.get('/health', async () => ({ ok: true, ai: llm ? { provider: llm.name, model: llm.model } : null }));
+
+  app.post('/auth/device', async (req) => {
+    const b = z.object({ legacyUserId: z.string().uuid().optional() }).parse(req.body ?? {});
+    return registerDevice(b.legacyUserId);
+  });
 
   app.get('/geocode', async (req) => {
     const q = z.object({ q: z.string().min(2).max(200), lat: z.coerce.number().optional(), lon: z.coerce.number().optional() }).parse(req.query);
