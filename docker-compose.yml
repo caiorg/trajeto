@@ -36,6 +36,8 @@ services:
           echo "Extrato novo ($$new): o Valhalla refaz o grafo na próxima inicialização"
           rm -rf valhalla_tiles valhalla_tiles.tar admins.sqlite file_hashes.txt
         fi
+        # Sem region.url, uma execução interrompida daqui em diante não passa pelo teste acima e baixa de novo.
+        rm -f region.url
         mv region.osm.pbf.part region.osm.pbf
         printf '%s' "$$new" > region.sha256
         printf '%s' "$$OSM_EXTRACT_URL" > region.url
@@ -57,16 +59,22 @@ services:
       - sh
       - -euc
       - |
-        if [ -f /tiles/region.pmtiles ] && [ "$$(cat /tiles/region.sha256 2>/dev/null)" = "$$(cat /osm/region.sha256)" ]; then
-          echo "Tiles já gerados para $$(cat /osm/region.url)"; exit 0
+        src=$$(cat /osm/region.sha256)
+        if [ -f /tiles/region.pmtiles ] && [ "$$(cat /tiles/region.sha256 2>/dev/null)" = "$$src" ]; then
+          echo "Tiles já gerados para o extrato $$src"; exit 0
         fi
         mkdir -p /tiles/build
         java -cp @/app/jib-classpath-file com.onthegomap.planetiler.Main \
           --osm-path=/osm/region.osm.pbf --output=/tiles/build/region.pmtiles --force \
           --download --download-dir=/tiles/sources --tmpdir=/tiles/tmp
-        rm -rf /tiles/tmp /tiles/region.sha256
+        rm -rf /tiles/tmp
+        # O osm-extract pode ter trocado o extrato durante a geração: aí o resultado não vale e o mapa anterior fica.
+        if [ "$$(cat /osm/region.sha256)" != "$$src" ]; then
+          echo "O extrato mudou durante a geração; rode de novo."; exit 1
+        fi
+        rm -f /tiles/region.sha256
         mv /tiles/build/region.pmtiles /tiles/region.pmtiles
-        cp /osm/region.sha256 /tiles/region.sha256
+        printf '%s' "$$src" > /tiles/region.sha256
 
   map-assets:
     build:
