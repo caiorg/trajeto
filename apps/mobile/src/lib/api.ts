@@ -30,8 +30,10 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(method: 'GET' | 'POST' | 'PUT' | 'PATCH', path: string, body?: unknown, timeoutMs = 25000): Promise<T> {
-  const { apiUrl, userId } = useSettings.getState();
+type Method = 'GET' | 'POST' | 'PUT' | 'PATCH';
+
+async function send<T>(method: Method, path: string, body: unknown, timeoutMs: number, token: string | null): Promise<T> {
+  const { apiUrl } = useSettings.getState();
   // AbortSignal.timeout não existe em todas as versões do Hermes.
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -40,7 +42,7 @@ async function request<T>(method: 'GET' | 'POST' | 'PUT' | 'PATCH', path: string
     res = await fetch(`${apiUrl.replace(/\/$/, '')}${path}`, {
       method,
       headers: {
-        'x-user-id': userId,
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
         'x-time-zone': timeZone(),
         ...(body === undefined ? {} : { 'content-type': 'application/json' }),
       },
@@ -57,8 +59,53 @@ async function request<T>(method: 'GET' | 'POST' | 'PUT' | 'PATCH', path: string
   return data as T;
 }
 
+/** O AsyncStorage carrega depois do primeiro render; sem esperar, o app registraria um usuário novo. */
+function hydrated(): Promise<void> {
+  if (useSettings.persist.hasHydrated()) return Promise.resolve();
+  return new Promise((resolve) => {
+    const off = useSettings.persist.onFinishHydration(() => {
+      off();
+      resolve();
+    });
+  });
+}
+
+let registering: Promise<string> | null = null;
+
+/**
+ * Token deste aparelho para o servidor atual. Sem token, registra o aparelho e envia o
+ * `userId` local para o servidor adotar os dados já gravados nele.
+ */
+async function deviceToken(): Promise<string> {
+  await hydrated();
+  const { auth, apiUrl } = useSettings.getState();
+  if (auth?.apiUrl === apiUrl) return auth.token;
+  registering ??= send<{ userId: string; token: string }>('POST', '/auth/device', { legacyUserId: useSettings.getState().userId }, 15000, null)
+    .then((r) => {
+      useSettings.getState().setAuth(r.userId, { apiUrl, token: r.token });
+      return r.token;
+    })
+    .finally(() => {
+      registering = null;
+    });
+  return registering;
+}
+
+async function request<T>(method: Method, path: string, body?: unknown, timeoutMs = 25000): Promise<T> {
+  const token = await deviceToken();
+  try {
+    return await send<T>(method, path, body, timeoutMs, token);
+  } catch (e) {
+    // Token recusado (banco do servidor recriado, por exemplo): descarta e registra de novo uma vez.
+    if (!(e instanceof ApiError) || e.status !== 401) throw e;
+    const { userId, auth } = useSettings.getState();
+    if (auth?.token === token) useSettings.getState().setAuth(userId, null);
+    return send<T>(method, path, body, timeoutMs, await deviceToken());
+  }
+}
+
 export const api = {
-  health: () => request<{ ok: boolean; ai: { provider: string; model: string } | null }>('GET', '/health', undefined, 5000),
+  health: () => send<{ ok: boolean; ai: { provider: string; model: string } | null }>('GET', '/health', undefined, 5000, null),
   geocode: (q: string, near?: LatLon) =>
     request<{ results: GeocodeResult[] }>(
       'GET',

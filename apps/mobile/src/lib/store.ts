@@ -38,26 +38,37 @@ const settingsStorage = createJSONStorage(() => ({
 
 export type ThemePref = 'system' | 'light' | 'dark';
 
+/** Token emitido por `POST /auth/device`. Vale só para o servidor que o emitiu. */
+export interface DeviceAuth {
+  apiUrl: string;
+  token: string;
+}
+
 interface Settings {
+  /** Gerado no aparelho até o primeiro registro; depois, o id que o servidor devolveu. */
   userId: string;
+  auth: DeviceAuth | null;
   apiUrl: string;
   voice: boolean;
   theme: ThemePref;
   avoidTolls: boolean;
   avoidHighways: boolean;
-  set: (patch: Partial<Omit<Settings, 'set' | 'userId'>>) => void;
+  set: (patch: Partial<Omit<Settings, 'set' | 'setAuth' | 'userId' | 'auth'>>) => void;
+  setAuth: (userId: string, auth: DeviceAuth | null) => void;
 }
 
 export const useSettings = create<Settings>()(
   persist(
     (set) => ({
       userId: randomUUID(),
+      auth: null,
       apiUrl: defaultApiUrl(),
       voice: true,
       theme: 'system',
       avoidTolls: false,
       avoidHighways: false,
       set: (patch) => set(patch),
+      setAuth: (userId, auth) => set({ userId, auth }),
     }),
     { name: 'wayboo-settings', storage: settingsStorage },
   ),
