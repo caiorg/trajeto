@@ -77,6 +77,28 @@ Precisa também de Docker com o Compose v2 e de acesso à internet durante o pre
 
 4. No app, abra Ajustes, troque a URL do servidor pela `PUBLIC_URL` e toque em testar. O status mostra "Mapa do próprio servidor". O app lê os estilos em `/health` e os guarda, então o mapa já abre pelo servidor próprio no próximo início.
 
+## Variáveis da API
+
+O serviço `api` lê o `.env` (`env_file`). Todas as variáveis da API são opcionais e estão comentadas no bloco "Variáveis da API" do `.env.example`, com o padrão de cada uma. Para mudar uma, descomente a linha no `.env` e rode `docker compose up -d api`.
+
+| Variável | Padrão | Efeito |
+| --- | --- | --- |
+| `GPS_RETENTION_HOURS` | `24` | Horas que o servidor guarda o rastro GPS, os planos e os alertas expirados. `0` apaga na próxima rodada de limpeza, que roda ao subir a API e a cada hora. Valor não numérico ou negativo impede a API de subir. O que cada tabela guarda está em [`docs/privacidade.md`](privacidade.md). |
+| `AI_PROVIDER` | detectado pela chave | `anthropic`, `openai`, `ollama`, `openrouter` ou `none`. Sem valor, a API usa o provedor da chave presente (`ANTHROPIC_API_KEY` ou `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, nessa ordem) e, sem chave, desliga a IA. |
+| `AI_MODEL` | `claude-opus-5-5` com `anthropic` | Obrigatório com `openai`, `ollama` e `openrouter`. |
+| `AI_BASE_URL` | `http://localhost:11434/v1` com `ollama`, `https://openrouter.ai/api/v1` com `openrouter` | Dentro do contêiner, `localhost` é o próprio contêiner. Para um Ollama na máquina, use `http://host.docker.internal:11434/v1`. |
+| `AI_TIMEOUT_MS` | `15000` | Tempo máximo de cada chamada ao modelo. |
+| `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `OLLAMA_API_KEY` | sem padrão (`OLLAMA_API_KEY`: `ollama`) | Chave do provedor. Uma chave remota faz a API chamar serviço externo (ver [O que ainda chama serviço externo](#o-que-ainda-chama-serviço-externo)). |
+| `SUGGESTION_ROUTE_MAX_AGE_MIN` | `1440` | Minutos em que `/suggestions` reaproveita a rota habitual guardada antes de pedir outra ao Valhalla. |
+| `SUGGESTION_ROUTE_RADIUS_M` | `250` | Distância máxima, em metros, entre a origem e o destino do pedido e os pontos da rota guardada para ela ainda valer. |
+| `OPEN_METEO_URL` | `https://api.open-meteo.com` | Serviço de clima. |
+| `CORS_ORIGIN` | qualquer origem | Uma origem só, para limitar quem chama a API pelo navegador. O app nativo não usa CORS. |
+| `LOG_LEVEL` | `info` | `fatal`, `error`, `warn`, `info`, `debug` ou `trace`. |
+| `USER_AGENT` | `Wayboo/0.1 (+https://github.com/caiorg/wayboo)` | Enviado ao Valhalla, ao Photon e ao Open-Meteo. |
+| `HOST` | `0.0.0.0` | Interface em que a API escuta. |
+
+O `docker-compose.yml` fixa `PORT`, `DB_PATH`, `VALHALLA_URL`, `PHOTON_URL`, `MAP_STYLE_URL` e `MAP_STYLE_DARK_URL`, porque o gateway e os volumes dependem delas. O valor dessas no `.env` não tem efeito. O serviço `map-assets` recebe só `PUBLIC_URL` e grava em `MAP_DIR` (padrão `/srv/map`, o volume `map`). Os padrões dessas variáveis, válidos para a API fora do Compose, estão no `.env.example`.
+
 ## HTTPS
 
 Por padrão o gateway serve HTTP. Nesse modo, o token do aparelho e as rotas passam em texto claro, e qualquer um na mesma rede pode lê-los. Use HTTP só numa rede em que você confia, ou por uma VPN como Tailscale ou WireGuard.
