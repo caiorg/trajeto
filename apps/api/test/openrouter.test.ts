@@ -19,14 +19,14 @@ const completion = (content: string) =>
     choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content, refusal: null } }],
   });
 
-type Call = { url: string; headers: Headers; body: any };
+type Call = { url: string; headers: Headers; body: any; redirect?: RequestRedirect };
 
 /** Simula o OpenRouter: catálogo de endpoints e chat completions. Nenhuma chamada sai da máquina. */
 function fakeOpenRouter(opts: { catalog: () => Response; content: string }) {
   const calls: Call[] = [];
   const fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input instanceof Request ? input.url : input);
-    calls.push({ url, headers: new Headers(init?.headers), body: init?.body ? JSON.parse(String(init.body)) : null });
+    calls.push({ url, headers: new Headers(init?.headers), body: init?.body ? JSON.parse(String(init.body)) : null, redirect: init?.redirect });
     if (url.endsWith('/endpoints')) return opts.catalog();
     if (url.endsWith('/chat/completions')) return completion(opts.content);
     return json({ error: { code: 404, message: 'Not Found' } }, 404);
@@ -56,6 +56,8 @@ describe('openRouterProvider', () => {
       provider: { require_parameters: true, data_collection: 'deny' },
       response_format: { type: 'json_schema', json_schema: { name: 'route_brief', strict: true } },
     });
+    // Nenhuma requisição segue redirecionamento.
+    expect(or.calls.every((c) => c.redirect === 'error')).toBe(true);
     // O catálogo é consultado uma vez só.
     expect(or.calls.filter((c) => c.url.endsWith('/endpoints'))).toHaveLength(1);
     expect(or.calls.filter((c) => c.url.endsWith('/chat/completions'))).toHaveLength(2);
