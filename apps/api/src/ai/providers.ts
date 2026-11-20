@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod';
 import OpenAI from 'openai';
 import { zodResponseFormat } from 'openai/helpers/zod';
+import { parseChatCompletion } from 'openai/lib/parser';
 import { z } from 'zod';
 import { config } from '../config';
 
@@ -57,6 +58,20 @@ interface OpenAiCompatibleOptions {
   preflight?: () => Promise<void>;
 }
 
+const BodyError = z.object({ code: z.union([z.number(), z.string()]).optional(), message: z.string() });
+const ErrorEnvelope = z.object({ error: BodyError.optional(), choices: z.array(z.object({ error: BodyError.optional() })).optional() });
+
+/**
+ * O OpenRouter pode responder HTTP 200 com o erro no corpo: `error` no topo (sem `choices`) ou `choices[0].error`
+ * (https://openrouter.ai/docs/api-reference/errors). Só código e mensagem: `metadata` pode trazer trecho do prompt.
+ */
+function bodyError(res: unknown): AiError | null {
+  const parsed = ErrorEnvelope.safeParse(res);
+  const err = parsed.success ? (parsed.data.error ?? parsed.data.choices?.[0]?.error) : undefined;
+  if (!err) return null;
+  return new AiError(`Erro do provedor${err.code == null ? '' : ` ${err.code}`}: ${err.message.slice(0, 300)}`);
+}
+
 /** OpenAI e qualquer servidor compatível (Ollama, vLLM, LM Studio, OpenRouter) via `baseURL`. */
 function openAiCompatibleProvider(o: OpenAiCompatibleOptions): LlmProvider {
   const client = new OpenAI({
@@ -72,16 +87,20 @@ function openAiCompatibleProvider(o: OpenAiCompatibleOptions): LlmProvider {
     model: o.model,
     async generateObject({ system, prompt, schema, schemaName }) {
       await o.preflight?.();
-      const res = await client.chat.completions.parse({
+      const body = {
         ...o.extraBody,
         model: o.model,
         messages: [
-          { role: 'system', content: system },
-          { role: 'user', content: prompt },
+          { role: 'system' as const, content: system },
+          { role: 'user' as const, content: prompt },
         ],
         response_format: zodResponseFormat(schema, schemaName),
-      });
-      const msg = res.choices[0]?.message;
+      };
+      // `create` + `parseChatCompletion` em vez de `parse`: o erro no corpo precisa ser lido antes do parser do SDK.
+      const res = await client.chat.completions.create(body);
+      const err = bodyError(res);
+      if (err) throw err;
+      const msg = parseChatCompletion(res, body).choices[0]?.message;
       if (msg?.refusal) throw new AiError(`O modelo recusou: ${msg.refusal}`);
       if (msg?.parsed == null) throw new AiError('Resposta sem JSON válido');
       return msg.parsed as z.infer<typeof schema>;

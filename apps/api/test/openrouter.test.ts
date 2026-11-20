@@ -24,17 +24,30 @@ const completion = (content: string) =>
 type Call = { url: string; headers: Headers; body: any; redirect?: RequestRedirect };
 
 /** Simula o OpenRouter: catálogo de endpoints e chat completions. Nenhuma chamada sai da máquina. */
-function fakeOpenRouter(opts: { catalog: () => Response; content: string }) {
+function fakeOpenRouter(opts: { catalog: () => Response; content: string; chat?: () => Response }) {
   const calls: Call[] = [];
   const fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input instanceof Request ? input.url : input);
     calls.push({ url, headers: new Headers(init?.headers), body: init?.body ? JSON.parse(String(init.body)) : null, redirect: init?.redirect });
     if (url.endsWith('/endpoints')) return opts.catalog();
-    if (url.endsWith('/chat/completions')) return completion(opts.content);
+    if (url.endsWith('/chat/completions')) return opts.chat?.() ?? completion(opts.content);
     return json({ error: { code: 404, message: 'Not Found' } }, 404);
   });
   return { fetch: fetch as unknown as typeof globalThis.fetch, calls };
 }
+
+/** Erro depois do cabeçalho: HTTP 200 só com `error` no topo, sem `choices` (docs de erros do OpenRouter). */
+const errorOnly = (code: number, message: string) => () => json({ id: 'gen-2', error: { code, message, metadata: { flagged_input: 'oi' } } });
+
+/** Erro no meio da geração: conteúdo parcial e `choices[0].error`, com HTTP 200. */
+const choiceError = (code: number, message: string) => () =>
+  json({
+    id: 'gen-3',
+    object: 'chat.completion',
+    created: 0,
+    model: MODEL,
+    choices: [{ index: 0, finish_reason: 'error', message: { role: 'assistant', content: '{"head', refusal: null }, error: { code, message } }],
+  });
 
 const Schema = z.object({ headline: z.string(), warnings: z.array(z.string()) });
 const args = { system: 'sys', prompt: 'oi', schema: Schema, schemaName: 'route_brief' };
@@ -118,6 +131,13 @@ describe('openRouterProvider', () => {
     }
   });
 
+  it('repassa o erro de `choices[0].error` devolvido com HTTP 200', async () => {
+    const or = fakeOpenRouter({ catalog: () => catalog([['structured_outputs']]), content: '', chat: choiceError(502, 'Provider returned error') });
+    const p = openRouterProvider({ model: MODEL, apiKey: KEY, fetch: or.fetch });
+
+    await expect(p.generateObject(args)).rejects.toThrow('Erro do provedor 502: Provider returned error');
+  });
+
   it('recusa AI_BASE_URL em http:// fora de loopback', () => {
     expect(() => openRouterProvider({ model: MODEL, apiKey: KEY, baseURL: 'http://proxy.example.com/v1' })).toThrow(/https/);
     expect(() => openRouterProvider({ model: MODEL, apiKey: KEY, baseURL: 'http://localhost:8080/v1' })).not.toThrow();
@@ -199,5 +219,22 @@ describe('AI_PROVIDER=openrouter no planejador', () => {
     expect(res.intent.avoidTolls).toBe(true);
     expect(log).toHaveBeenCalledWith(expect.stringContaining('openrouter'));
     expect(or.calls.some((c) => c.url.endsWith('/chat/completions'))).toBe(false);
+  });
+
+  it('cai no modo regras e registra a mensagem do erro devolvido com HTTP 200', async () => {
+    const or = fakeOpenRouter({ catalog: () => catalog([['structured_outputs']]), content: '', chat: errorOnly(429, 'Rate limit exceeded upstream') });
+    const { parseIntent } = await plannerWith(or);
+    const log = vi.fn();
+
+    const res = await parseIntent('ir pro Ibirapuera sem pedágio', log);
+    expect(res.provider).toBe('regras');
+    expect(res.intent.avoidTolls).toBe(true);
+    expect(log).toHaveBeenCalledTimes(1);
+    const msg = log.mock.calls[0]![0] as string;
+    expect(msg).toContain('Erro do provedor 429: Rate limit exceeded upstream');
+    // Nem a chave nem o prompt (nem o `metadata`, que pode trazer trecho dele) vão para o log.
+    expect(msg).not.toContain(KEY);
+    expect(msg).not.toContain('Ibirapuera');
+    expect(msg).not.toContain('flagged_input');
   });
 });
