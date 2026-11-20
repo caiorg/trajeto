@@ -299,6 +299,20 @@ describe('navegação', () => {
     stops = markVisitedStops(stops, far);
     expect(rerouteRequest(plan, far, stops, opts).waypoints).toEqual([farmacia]);
   });
+
+  it('recálculo não volta para parada pulada', () => {
+    const plan = { destination: { lat: WORK[1], lon: WORK[0] }, destinationName: 'Trabalho' };
+    const opts = { avoidTolls: false, avoidHighways: false, avoidFerries: false };
+    const a = { lat: -23.58, lon: -46.64 };
+    const b = { lat: -23.59, lon: -46.63 };
+    let stops: TripStop[] = [a, b].map((p) => ({ ...p, visited: false }));
+
+    // Passa por B sem passar por A e depois sai da rota.
+    stops = markVisitedStops(stops, { lat: b.lat + 0.00027, lon: b.lon });
+    const offRoute = { lat: HOME[1], lon: HOME[0] };
+    stops = markVisitedStops(stops, offRoute);
+    expect(rerouteRequest(plan, offRoute, stops, opts).waypoints).toEqual([]);
+  });
 });
 
 function mulberry(seed: number) {
