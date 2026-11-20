@@ -43,6 +43,14 @@ function detectProvider(): AiProviderName {
 
 const provider = detectProvider();
 
+function positiveEnv(name: string, fallback: number): number {
+  const raw = env[name]?.trim();
+  if (!raw) return fallback;
+  const v = Number(raw);
+  if (!Number.isFinite(v) || v <= 0) throw new Error(`${name} inválido: ${raw} (use um número positivo)`);
+  return v;
+}
+
 const DEFAULT_BASE_URL: Partial<Record<AiProviderName, string>> = {
   ollama: 'http://localhost:11434/v1',
   openrouter: 'https://openrouter.ai/api/v1',
@@ -63,6 +71,12 @@ export const config = {
   photonUrl: (env.PHOTON_URL ?? 'https://photon.komoot.io').replace(/\/$/, ''),
   openMeteoUrl: (env.OPEN_METEO_URL ?? 'https://api.open-meteo.com').replace(/\/$/, ''),
   corsOrigin: env.CORS_ORIGIN ?? true,
+  /** `/suggestions` reaproveita a rota habitual guardada e só pede outra ao roteador quando ela fica velha ou o pedido sai do raio. */
+  suggestions: {
+    routeMaxAgeMs: positiveEnv('SUGGESTION_ROUTE_MAX_AGE_MIN', 24 * 60) * 60_000,
+    /** Distância máxima entre o ponto atual (e o destino) e os pontos usados quando a rota foi guardada. */
+    routeRadiusM: positiveEnv('SUGGESTION_ROUTE_RADIUS_M', 250),
+  },
   ai: {
     provider,
     model: aiEnv.AI_MODEL ?? (provider === 'anthropic' ? 'claude-opus-5-5' : null),

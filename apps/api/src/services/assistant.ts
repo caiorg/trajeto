@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import {
   BINS_PER_DAY,
   binLabel,
@@ -6,6 +7,7 @@ import {
   distanceToPolyline,
   formatDurationPtBR,
   geohashCenter,
+  haversine,
   localTime,
   matchPlace,
   PLACE_KIND_LABEL,
@@ -14,14 +16,16 @@ import {
   type AssistantResponse,
   type Insights,
   type LatLon,
+  type PlanResponse,
   type StopSuggestion,
   type Suggestion,
 } from '@wayboo/core';
 import { parseIntent } from '../ai/planner';
-import { db, getPlaces, getPrefs, getRoutines, statsByPrefix } from '../db';
-import { geocode, STOP_QUERY, type BBox } from '../providers/geo-services';
+import { config } from '../config';
+import { db, getPlaces, getPrefs, getRoutineRoutes, getRoutines, saveRoutineRoutes, statsByPrefix } from '../db';
+import { currentWeather, geocode, STOP_QUERY, type BBox } from '../providers/geo-services';
 import { valhalla } from '../providers/routing';
-import { knownPlace, plan } from './planning';
+import { evaluatePlan, knownPlace, plan } from './planning';
 
 type Row = Record<string, string | number | null>;
 type Log = (msg: string) => void;
@@ -131,6 +135,32 @@ export async function assistant(userId: string, text: string, origin: LatLon, ti
 
 // ---------- sugestões proativas (rotina) ----------
 
+const metersBetween = (a: LatLon, b: LatLon) => haversine([a.lon, a.lat], [b.lon, b.lat]);
+
+/**
+ * Plano da rotina origem → destino. Reaproveita as rotas guardadas e só reavalia o ETA;
+ * o roteador só é chamado se elas passaram da idade máxima ou se a origem ou o destino
+ * se afastaram do raio dos pontos usados quando foram guardadas.
+ */
+async function routinePlan(userId: string, originId: string, destId: string, req: Parameters<typeof plan>[1]): Promise<PlanResponse> {
+  const { routeMaxAgeMs, routeRadiusM } = config.suggestions;
+  const now = Date.now();
+  const saved = getRoutineRoutes(userId, originId, destId);
+  if (
+    saved &&
+    now - saved.fetchedAt <= routeMaxAgeMs &&
+    metersBetween(saved.from, req.origin) <= routeRadiusM &&
+    metersBetween(saved.to, req.destination) <= routeRadiusM
+  ) {
+    // Ids novos: cada plano tem as próprias rotas, como no caminho que chama o roteador.
+    const routes = saved.routes.map((r) => ({ ...r, id: randomUUID() }));
+    return evaluatePlan(userId, req, routes, await currentWeather(req.origin.lat, req.origin.lon));
+  }
+  const result = await plan(userId, req);
+  saveRoutineRoutes(userId, originId, destId, { from: req.origin, to: req.destination, fetchedAt: now, routes: result.routes.map((r) => r.route) });
+  return result;
+}
+
 export async function suggestions(userId: string, here: LatLon, timeZone: string): Promise<Suggestion[]> {
   const places = getPlaces(userId);
   const origin = matchPlace(places, here.lat, here.lon, 300);
@@ -144,7 +174,7 @@ export async function suggestions(userId: string, here: LatLon, timeZone: string
   for (const p of preds) {
     const dest = places.find((x) => x.id === p.destId);
     if (!dest) continue;
-    const result = await plan(userId, {
+    const result = await routinePlan(userId, origin.id, dest.id, {
       origin: here,
       destination: { lat: dest.lat, lon: dest.lon },
       destinationName: dest.name ?? PLACE_KIND_LABEL[dest.kind],
