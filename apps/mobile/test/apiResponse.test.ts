@@ -31,7 +31,7 @@ describe('leitura da resposta', () => {
     vi.stubGlobal('fetch', vi.fn(async () => ok(async () => Promise.reject(new TypeError('network error')))));
     const e = await api.exportMyData().catch((err: unknown) => err);
     expect(e).toBeInstanceOf(ApiError);
-    expect(e).toMatchObject({ status: 0, message: 'Resposta incompleta do servidor. Tente de novo.' });
+    expect(e).toMatchObject({ status: 200, message: 'Resposta incompleta do servidor. Tente de novo.' });
   });
 
   it('o timeout também vale para a leitura do corpo', async () => {
@@ -44,7 +44,7 @@ describe('leitura da resposta', () => {
     );
     const p = api.exportMyData().catch((err: unknown) => err);
     await vi.advanceTimersByTimeAsync(30000);
-    expect(await p).toMatchObject({ status: 0, message: 'Resposta incompleta do servidor. Tente de novo.' });
+    expect(await p).toMatchObject({ status: 200, message: 'Resposta incompleta do servidor. Tente de novo.' });
   });
 
   it('erro HTTP usa a mensagem do servidor', async () => {
