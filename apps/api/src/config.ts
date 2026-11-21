@@ -1,3 +1,4 @@
+import { isIP } from 'node:net';
 import { z } from 'zod';
 
 const env = process.env;
@@ -42,6 +43,37 @@ const RetentionEnv = z.object({
 });
 
 const retentionEnv = parseEnv(RetentionEnv);
+
+const PROXY_RANGES = ['loopback', 'linklocal', 'uniquelocal'];
+
+/** IP, CIDR (`10.0.0.0/8`) ou faixa nomeada do `proxy-addr` (`uniquelocal` cobre as redes privadas, como a do Docker). */
+function isProxyAddr(s: string): boolean {
+  if (PROXY_RANGES.includes(s)) return true;
+  const [ip = '', bits, ...rest] = s.split('/');
+  const v = isIP(ip);
+  if (!v || rest.length) return false;
+  return bits === undefined || (/^\d+$/.test(bits) && Number(bits) <= (v === 4 ? 32 : 128));
+}
+
+/**
+ * Limite de `POST /auth/device` por IP. Vazio usa o padrão; `AUTH_DEVICE_RATE_LIMIT=0` desliga.
+ * `TRUST_PROXY` lista, separados por vírgula, os proxies cujo `X-Forwarded-For` vale; vazio não confia em ninguém.
+ * `true` e contagem de saltos não são aceitos: o primeiro confiaria no cabeçalho forjado pelo cliente, e o Fastify 5
+ * ignora o segundo.
+ */
+const RateLimitEnv = z.object({
+  AUTH_DEVICE_RATE_LIMIT: optionalText.transform((v) => (v === undefined ? 30 : Number(v))).pipe(z.number().int().nonnegative()),
+  AUTH_DEVICE_RATE_WINDOW_MIN: optionalPositive,
+  TRUST_PROXY: optionalText.transform((v, ctx): false | string[] => {
+    if (v === undefined || v === 'false') return false;
+    const list = v.split(',').map((s) => s.trim());
+    if (list.every(isProxyAddr)) return list;
+    ctx.addIssue({ code: 'custom', message: 'use uma lista de IPs, CIDRs ou faixas (loopback, linklocal, uniquelocal)' });
+    return z.NEVER;
+  }),
+});
+
+const rateLimitEnv = parseEnv(RateLimitEnv);
 
 export type AiProviderName = 'anthropic' | 'openai' | 'ollama' | 'openrouter' | 'none';
 
@@ -95,6 +127,13 @@ export const config = {
   },
   /** Horas que o rastro GPS de uma viagem encerrada fica no servidor. Ver docs/privacidade.md. */
   gpsRetentionHours: retentionEnv.GPS_RETENTION_HOURS,
+  /** Registros de aparelho por IP (IPv6 por /64) a cada janela. `max` 0 desliga. */
+  authDeviceRateLimit: {
+    max: rateLimitEnv.AUTH_DEVICE_RATE_LIMIT,
+    windowMs: (rateLimitEnv.AUTH_DEVICE_RATE_WINDOW_MIN ?? 60) * 60_000,
+  },
+  /** Repassado ao `trustProxy` do Fastify; define de onde vem `req.ip`. */
+  trustProxy: rateLimitEnv.TRUST_PROXY,
   ai: {
     provider,
     model: aiEnv.AI_MODEL ?? (provider === 'anthropic' ? 'claude-opus-5-5' : null),

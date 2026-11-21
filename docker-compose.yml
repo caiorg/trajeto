@@ -150,6 +150,9 @@ services:
       PHOTON_URL: http://photon:2322
       MAP_STYLE_URL: ${PUBLIC_URL:-http://localhost:8080}/map/styles/light.json
       MAP_STYLE_DARK_URL: ${PUBLIC_URL:-http://localhost:8080}/map/styles/dark.json
+      # A API não publica porta: na rede privada do compose só o gateway chega a ela, e o Caddy descarta o
+      # X-Forwarded-For vindo do cliente. Assim o cabeçalho que ele repassa traz o IP real.
+      TRUST_PROXY: uniquelocal
     volumes:
       - api:/data
 

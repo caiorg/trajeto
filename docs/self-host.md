@@ -96,8 +96,31 @@ O serviço `api` lê o `.env` (`env_file`). Todas as variáveis da API são opci
 | `LOG_LEVEL` | `info` | `fatal`, `error`, `warn`, `info`, `debug` ou `trace`. |
 | `USER_AGENT` | `Wayboo/0.1 (+https://github.com/caiorg/wayboo)` | Enviado ao Valhalla, ao Photon e ao Open-Meteo. |
 | `HOST` | `0.0.0.0` | Interface em que a API escuta. |
+| `AUTH_DEVICE_RATE_LIMIT` | `30` | Requisições a `POST /auth/device` (registro de aparelho) por IP a cada janela. A contagem vem antes da validação, então tentativas com corpo inválido também contam. IPv6 conta pelo /64. Acima do limite, a API responde 429. Com `0`, não há limite. |
+| `AUTH_DEVICE_RATE_WINDOW_MIN` | `60` | Duração da janela do limite, em minutos. |
 
-O `docker-compose.yml` fixa `PORT`, `DB_PATH`, `VALHALLA_URL`, `PHOTON_URL`, `MAP_STYLE_URL` e `MAP_STYLE_DARK_URL`, porque o gateway e os volumes dependem delas. O valor dessas no `.env` não tem efeito. O serviço `map-assets` recebe só `PUBLIC_URL` e grava em `MAP_DIR` (padrão `/srv/map`, o volume `map`). Os padrões dessas variáveis, válidos para a API fora do Compose, estão no `.env.example`.
+O `docker-compose.yml` fixa `PORT`, `DB_PATH`, `VALHALLA_URL`, `PHOTON_URL`, `MAP_STYLE_URL`, `MAP_STYLE_DARK_URL` e `TRUST_PROXY`, porque o gateway e os volumes dependem delas. O valor dessas no `.env` não tem efeito. O serviço `map-assets` recebe só `PUBLIC_URL` e grava em `MAP_DIR` (padrão `/srv/map`, o volume `map`). Os padrões dessas variáveis, válidos para a API fora do Compose, estão no `.env.example`.
+
+O limite de registro usa o IP que o gateway repassa em `X-Forwarded-For`. O Compose fixa `TRUST_PROXY=uniquelocal`, e o Caddy descarta o cabeçalho enviado pelo cliente.
+
+Com outro proxy na frente do Caddy, por exemplo com `GATEWAY_BIND=127.0.0.1` e o TLS terminado fora, todo cliente chega com o IP desse proxy e divide o mesmo limite. Para corrigir:
+
+1. Configure o proxy para substituir o `X-Forwarded-For` pelo IP do cliente, descartando o valor que o cliente enviou. No nginx, use `proxy_set_header X-Forwarded-For $remote_addr;`, e não `$proxy_add_x_forwarded_for`. Em outro proxy, apague o cabeçalho recebido antes de gravar o novo. Só acrescentar não basta: `TRUST_PROXY=uniquelocal` confia em todo IP privado, inclusive o de um cliente na rede local, e a API passaria a usar o valor que esse cliente forjou.
+2. Descubra o endereço do proxy que o Caddy enxerga. Com o proxy na mesma máquina, a conexão chega pela porta publicada, e o Caddy enxerga o gateway da rede do Compose, não `127.0.0.1`: `docker network inspect wayboo_default --format '{{(index .IPAM.Config 0).Gateway}}'`. Com o proxy em outra máquina, o Caddy enxerga o IP dela.
+3. Declare esse endereço em `trusted_proxies`, dentro de `servers`, no bloco de opções globais do topo do `selfhost/Caddyfile`. O arquivo não traz essa diretiva:
+
+   ```caddyfile
+   {
+   	admin off
+   	servers {
+   		trusted_proxies static 172.18.0.1/32
+   	}
+   }
+   ```
+
+   Depois rode `docker compose restart gateway`, porque o Caddyfile montado não recria o contêiner com `up -d`.
+
+Se o endereço do passo 2 for público, inclua-o também em `TRUST_PROXY` no `docker-compose.yml`, por exemplo `TRUST_PROXY: uniquelocal,203.0.113.10`, porque `uniquelocal` cobre só redes privadas. O valor do `.env` não tem efeito, porque o Compose fixa essa variável. Depois rode `docker compose up -d api`, que recria a API com o valor novo; reiniciar o `gateway` não muda a API. Com um endereço privado, como o gateway da rede do Compose, `uniquelocal` já basta.
 
 ### Ollama na mesma máquina
 

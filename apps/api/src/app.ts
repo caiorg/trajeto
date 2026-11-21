@@ -13,7 +13,7 @@ import {
   tradeoffs,
   VoteSchema,
 } from '@wayboo/core';
-import Fastify, { type FastifyRequest } from 'fastify';
+import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import { z, ZodError } from 'zod';
 import { briefPlan, narrateInsights } from './ai/planner';
 import { llm } from './ai/providers';
@@ -35,6 +35,7 @@ import {
 } from './db';
 import { geocode, reverseGeocode } from './providers/geo-services';
 import { HttpError } from './providers/http';
+import { fixedWindowLimiter, ipKey } from './rate-limit';
 import { assistant, insights, suggestions } from './services/assistant';
 import { plan } from './services/planning';
 import { addSamples, finishTrip, rerouteTrip, startTrip } from './services/trips';
@@ -85,7 +86,11 @@ function vote(userId: string, alertId: string, up: boolean) {
 
 /** Monta a API sem abrir porta, para o servidor e para os testes (`app.inject`). */
 export async function buildApp(opts: { logger?: boolean } = {}) {
-  const app = Fastify({ logger: opts.logger === false ? false : { level: process.env.LOG_LEVEL ?? 'info' }, bodyLimit: 2 * 1024 * 1024 });
+  const app = Fastify({
+    logger: opts.logger === false ? false : { level: process.env.LOG_LEVEL ?? 'info' },
+    bodyLimit: 2 * 1024 * 1024,
+    trustProxy: config.trustProxy,
+  });
   // O padrão do plugin só libera GET, HEAD e POST; o app web também usa PUT, PATCH e DELETE.
   await app.register(cors, { origin: config.corsOrigin, methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'] });
 
@@ -98,7 +103,16 @@ export async function buildApp(opts: { logger?: boolean } = {}) {
 
   app.get('/health', async () => ({ ok: true, ai: llm ? { provider: llm.name, model: llm.model } : null, map: config.mapStyles }));
 
-  app.post('/auth/device', async (req) => {
+  // Cada registro cria uma linha em `devices`: sem limite, um cliente enche a tabela.
+  const { max, windowMs } = config.authDeviceRateLimit;
+  const deviceLimit = max > 0 ? fixedWindowLimiter(max, windowMs) : null;
+  const limitDevice = async (req: FastifyRequest, reply: FastifyReply) => {
+    const retryAfterS = deviceLimit?.(ipKey(req.ip));
+    if (!retryAfterS) return;
+    return reply.status(429).header('retry-after', String(retryAfterS)).send({ error: 'Muitos registros deste endereço; tente mais tarde' });
+  };
+
+  app.post('/auth/device', { onRequest: limitDevice }, async (req) => {
     const b = z.object({ token: z.string().regex(TOKEN), legacyUserId: z.string().uuid().optional() }).parse(req.body ?? {});
     return registerDevice(b.token, b.legacyUserId);
   });
