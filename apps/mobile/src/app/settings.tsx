@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, Switch, TextInput, View } from 'react-native';
 import { Button, Card, Chip, T } from '@/components/ui';
-import { api } from '@/lib/api';
+import { api, LocalSaveError } from '@/lib/api';
 import { normalizeApiUrl, useSettings, type ThemePref } from '@/lib/store';
 import { useTheme } from '@/lib/theme';
 
@@ -50,10 +50,10 @@ export default function SettingsScreen() {
     setDeleteState('deleting');
     try {
       await api.deleteMyData();
-      setDeleteMsg('Dados apagados no servidor.');
+      setDeleteMsg('Dados apagados no servidor. Este aparelho recebeu um identificador novo.');
       void loadPrivacy();
-    } catch {
-      setDeleteMsg('Não foi possível apagar. Confira a conexão com o servidor.');
+    } catch (e) {
+      setDeleteMsg(e instanceof LocalSaveError ? e.message : 'Não foi possível apagar. Confira a conexão com o servidor.');
     }
     setDeleteState('idle');
   };

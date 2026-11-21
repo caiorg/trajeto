@@ -33,7 +33,8 @@
         {
           "locationWhenInUsePermission": "O Wayboo usa sua localização para navegar e aprender seus trajetos frequentes."
         }
-      ]
+      ],
+      "expo-secure-store"
     ],
     "experiments": {
       "typedRoutes": true
