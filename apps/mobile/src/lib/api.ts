@@ -42,6 +42,7 @@ async function send<T>(baseUrl: string, method: Method, path: string, body: unkn
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   let res: Response;
+  let data: { error?: string };
   try {
     res = await fetch(`${baseUrl}${path}`, {
       method,
@@ -53,12 +54,13 @@ async function send<T>(baseUrl: string, method: Method, path: string, body: unkn
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: ctrl.signal,
     });
+    // O corpo pode chegar depois dos cabeçalhos: o timeout vale até terminar a leitura.
+    data = (await res.json().catch(() => ({}))) as { error?: string };
   } catch {
     throw new ApiError(0, `Sem conexão com o servidor (${baseUrl}). Confira a URL em Ajustes.`);
   } finally {
     clearTimeout(timer);
   }
-  const data = (await res.json().catch(() => ({}))) as { error?: string };
   if (!res.ok) throw new ApiError(res.status, data.error ?? `Erro ${res.status}`);
   return data as T;
 }
@@ -145,6 +147,13 @@ async function request<T>(method: Method, path: string, body?: unknown, timeoutM
   }
 }
 
+/** Resposta de `GET /me/export`: as linhas de cada tabela ligadas ao usuário. */
+export interface UserDataExport {
+  userId: string;
+  exportedAt: string;
+  tables: Record<string, unknown[]>;
+}
+
 export interface Health {
   ok: boolean;
   ai: { provider: string; model: string } | null;
@@ -186,6 +195,8 @@ export const api = {
   narrative: () => request<{ text: string | null; provider: string }>('POST', '/insights/narrative', {}, 40000),
   privacy: () => request<Privacy>('GET', '/privacy'),
   setPrivacy: (p: Privacy) => request<Privacy>('PUT', '/privacy', p),
+  /** Todas as linhas deste usuário no servidor, menos o hash do token (docs/privacidade.md). */
+  exportMyData: () => request<UserDataExport>('GET', '/me/export', undefined, 30000),
   /** Apaga tudo deste usuário no servidor. O aparelho troca de token e de id; a próxima chamada registra um usuário novo. */
   deleteMyData: async () => {
     const baseUrl = currentUrl();

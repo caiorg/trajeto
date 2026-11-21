@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, Switch, TextInput, View } from 'react-native';
 import { Button, Card, Chip, T } from '@/components/ui';
 import { api, LocalSaveError } from '@/lib/api';
+import { exportMyData, type ExportResult } from '@/lib/exportData';
 import { normalizeApiUrl, useSettings, type ThemePref } from '@/lib/store';
 import { useTheme } from '@/lib/theme';
 
@@ -18,6 +19,17 @@ export default function SettingsScreen() {
   // Dois toques: o primeiro arma, o segundo apaga. Alert com botões não funciona na web.
   const [deleteState, setDeleteState] = useState<'idle' | 'confirm' | 'deleting'>('idle');
   const [deleteMsg, setDeleteMsg] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [exportResult, setExportResult] = useState<ExportResult | null>(null);
+
+  const exportData = async () => {
+    const server = normalizeApiUrl(useSettings.getState().apiUrl);
+    setExporting(true);
+    const result = await exportMyData();
+    setExporting(false);
+    // Trocou de servidor no meio: a mensagem não vale para o atual.
+    if (normalizeApiUrl(useSettings.getState().apiUrl) === server) setExportResult(result);
+  };
 
   const loadPrivacy = async () => {
     try {
@@ -64,6 +76,7 @@ export default function SettingsScreen() {
     if (nextUrl !== normalizeApiUrl(s.apiUrl)) {
       setDeleteState('idle');
       setDeleteMsg(null);
+      setExportResult(null);
     }
     s.set({ apiUrl: nextUrl });
     setStatus('Testando…');
@@ -141,6 +154,8 @@ export default function SettingsScreen() {
         <T variant="caption">
           O rastro GPS de cada viagem sai do servidor depois do prazo de retenção (24 horas no padrão); ficam só os tempos aprendidos por trecho, seus lugares e o resumo das viagens.
         </T>
+        <Button label="Exportar meus dados" kind="secondary" icon="download" loading={exporting} onPress={() => void exportData()} />
+        {exportResult ? <T variant="caption" color={exportResult.ok ? undefined : t.danger}>{exportResult.message}</T> : null}
         <Button
           label={deleteState === 'confirm' ? 'Confirmar: apagar meus dados' : 'Apagar meus dados do servidor'}
           kind="danger"
