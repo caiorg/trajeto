@@ -7,6 +7,7 @@ import {
   brazilNationalHolidays,
   decodePolyline,
   easterSunday,
+  estimateSegment,
   geohash,
   geohashCenter,
   haversine,
@@ -15,6 +16,7 @@ import {
   localTime,
   markVisitedStops,
   matchPlace,
+  observe,
   predictEta,
   predictTrips,
   PRIOR_WEIGHTS,
@@ -23,6 +25,7 @@ import {
   rerouteRequest,
   routeFeatures,
   simulateDrive,
+  statKey,
   tradeoffs,
   updatePreferences,
   type Coord,
@@ -270,6 +273,50 @@ describe('ETA aprendido', () => {
     expect(monday.durationS / r.baseDurationS).toBeGreaterThan(1.8);
     expect(carnaval.durationS).toBeLessThan(monday.durationS * 0.7);
     expect(carnaval.durationS / sunday.durationS).toBeCloseTo(1, 1);
+  });
+
+  it('sem viagens de domingo, o ETA de domingo não aplica o pico dos dias úteis', () => {
+    const r = makeRoute('r', HOME, WORK);
+    const rnd = mulberry(13);
+    const user: StatsMap = new Map();
+    const crowd: StatsMap = new Map();
+    // Quatro semanas só de dias úteis, sempre às 8h, com pico 2x.
+    for (let day = 0; day < 28; day++) {
+      const depart = at(day, 8, 0);
+      if (localTime(depart, TZ).dayType !== 'weekday') continue;
+      const truth = r.segments.map((s) => s.baseDurationS * 2 * (0.95 + rnd() * 0.1));
+      const trace = analyzeTrace(r, [...simulateDrive(r, truth, depart, 1, 3, rnd)]);
+      const learned = learnFromTrip({ route: r, observations: trace.observations, departAt: depart, timeZone: TZ, user, crowd, ctx: NO_CTX });
+      for (const [k, v] of learned.user) user.set(k, v);
+      for (const [k, v] of learned.crowd) crowd.set(k, v);
+    }
+    const eta = (epoch: number) => predictEta({ route: r, departAt: epoch, timeZone: TZ, user, crowd, ctx: NO_CTX });
+    const sundayAt = at(34, 8, 0);
+    expect(localTime(sundayAt, TZ).dayType).toBe('sunday');
+    const weekday = eta(at(35, 8, 0));
+    const sunday = eta(sundayAt);
+    expect(weekday.durationS / r.baseDurationS).toBeGreaterThan(1.8);
+    expect(sunday.durationS / r.baseDurationS).toBeLessThan(1.15);
+    expect(sunday.confidence).toBeLessThan(weekday.confidence);
+  });
+
+  it('sem dados no horário, usa a média do trecho no mesmo tipo de dia, somando horários distantes', () => {
+    const now = at(0, 12, 0);
+    const DAY = 86_400_000;
+    const user: StatsMap = new Map([
+      // Dia útil: 10h (peso 2, hoje) e 15h (peso 1, há 45 dias, vale metade).
+      [statKey.segBin('x', 'weekday', 20), observe(undefined, 0.6, now, 2)],
+      [statKey.segBin('x', 'weekday', 30), observe(undefined, 0.2, now - 45 * DAY, 1)],
+      // Outro tipo de dia e a média sem tipo de dia não entram.
+      [statKey.segBin('x', 'sunday', 10), observe(undefined, 2, now, 5)],
+      [statKey.seg('x'), observe(undefined, 2, now, 5)],
+    ]);
+    const e = estimateSegment('x', 'weekday', 10, user, new Map(), now);
+    // Pool: w = 2,5; média = 0,52; variância = 0,0256. Encolhe com k = 3 rumo a (0; 0,05).
+    expect(e.mean).toBeCloseTo((2.5 * 0.52) / 5.5, 6);
+    expect(e.variance).toBeCloseTo((2.5 * 0.0256 + 3 * 0.05) / 5.5, 6);
+    expect(e.userW).toBeCloseTo(0.5 * 2.5, 6);
+    expect(e.crowdW).toBe(0);
   });
 
   it('aprende o efeito da chuva a partir do resíduo das viagens', () => {
