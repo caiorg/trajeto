@@ -40,8 +40,14 @@ describe('exportMyData', () => {
     expect(await exportMyData()).toEqual({ ok: false, message: 'Não foi possível exportar. Erro 500' });
   });
 
+  it('resposta sem as tabelas (corpo interrompido) não grava arquivo', async () => {
+    vi.mocked(api.exportMyData).mockResolvedValue({} as never);
+    expect(await exportMyData()).toEqual({ ok: false, message: 'Não foi possível exportar. Resposta incompleta do servidor. Tente de novo.' });
+    expect(saveJson).not.toHaveBeenCalled();
+  });
+
   it('falha ao gravar ou compartilhar vira mensagem', async () => {
-    vi.mocked(api.exportMyData).mockResolvedValue({});
+    vi.mocked(api.exportMyData).mockResolvedValue({ userId: 'u1', exportedAt: '', tables: {} });
     vi.mocked(saveJson).mockRejectedValueOnce(new Error('Compartilhamento indisponível neste aparelho.'));
     expect(await exportMyData()).toEqual({ ok: false, message: 'Não foi possível gerar o arquivo. Compartilhamento indisponível neste aparelho.' });
   });

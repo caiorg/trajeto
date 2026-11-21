@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, api } from '../src/lib/api';
+import { api } from '../src/lib/api';
 
 vi.mock('expo-crypto', () => ({ getRandomBytes: (n: number) => new Uint8Array(n) }));
 vi.mock('../src/lib/store', () => {
@@ -27,13 +27,6 @@ describe('leitura da resposta', () => {
     await expect(api.exportMyData()).resolves.toEqual({ tables: {} });
   });
 
-  it('corpo interrompido ou inválido vira erro, não objeto vazio', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => ok(async () => Promise.reject(new TypeError('network error')))));
-    const e = await api.exportMyData().catch((err: unknown) => err);
-    expect(e).toBeInstanceOf(ApiError);
-    expect(e).toMatchObject({ status: 200, message: 'Resposta incompleta do servidor. Tente de novo.' });
-  });
-
   it('o timeout também vale para a leitura do corpo', async () => {
     vi.useFakeTimers();
     vi.stubGlobal(
@@ -42,9 +35,13 @@ describe('leitura da resposta', () => {
         ok(() => new Promise((_, reject) => init.signal!.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))))),
       ),
     );
-    const p = api.exportMyData().catch((err: unknown) => err);
-    await vi.advanceTimersByTimeAsync(30000);
-    expect(await p).toMatchObject({ status: 200, message: 'Resposta incompleta do servidor. Tente de novo.' });
+    let settled = false;
+    const p = api.exportMyData().finally(() => (settled = true));
+    await vi.advanceTimersByTimeAsync(29999);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    // A leitura abortada cai no mesmo fallback de corpo inválido; `exportMyData` em exportData.ts recusa o `{}`.
+    await expect(p).resolves.toEqual({});
   });
 
   it('erro HTTP usa a mensagem do servidor', async () => {

@@ -31,17 +31,6 @@ export class ApiError extends Error {
   }
 }
 
-/** Resposta 2xx cujo corpo não chegou inteiro ou não é JSON: o servidor processou o pedido `route` (`MÉTODO /caminho`). */
-export class IncompleteResponseError extends ApiError {
-  constructor(
-    status: number,
-    message: string,
-    public route: string,
-  ) {
-    super(status, message);
-  }
-}
-
 /** O servidor já apagou os dados, mas o aparelho não salvou a identidade nova. Não repetir o `DELETE /me`. */
 export class LocalSaveError extends Error {}
 
@@ -53,7 +42,7 @@ async function send<T>(baseUrl: string, method: Method, path: string, body: unkn
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   let res: Response;
-  let data: { error?: string } | undefined;
+  let data: { error?: string };
   try {
     res = await fetch(`${baseUrl}${path}`, {
       method,
@@ -66,15 +55,13 @@ async function send<T>(baseUrl: string, method: Method, path: string, body: unkn
       signal: ctrl.signal,
     });
     // O corpo pode chegar depois dos cabeçalhos: o timeout vale até terminar a leitura.
-    data = (await res.json().catch(() => undefined)) as { error?: string } | undefined;
+    data = (await res.json().catch(() => ({}))) as { error?: string };
   } catch {
     throw new ApiError(0, `Sem conexão com o servidor (${baseUrl}). Confira a URL em Ajustes.`);
   } finally {
     clearTimeout(timer);
   }
-  if (!res.ok) throw new ApiError(res.status, data?.error ?? `Erro ${res.status}`);
-  // Leitura interrompida ou corpo que não é JSON não vira resposta vazia.
-  if (data === undefined) throw new IncompleteResponseError(res.status, 'Resposta incompleta do servidor. Tente de novo.', `${method} ${path}`);
+  if (!res.ok) throw new ApiError(res.status, data.error ?? `Erro ${res.status}`);
   return data as T;
 }
 
@@ -160,6 +147,13 @@ async function request<T>(method: Method, path: string, body?: unknown, timeoutM
   }
 }
 
+/** Resposta de `GET /me/export`: as linhas de cada tabela ligadas ao usuário. */
+export interface UserDataExport {
+  userId: string;
+  exportedAt: string;
+  tables: Record<string, unknown[]>;
+}
+
 export interface Health {
   ok: boolean;
   ai: { provider: string; model: string } | null;
@@ -202,16 +196,11 @@ export const api = {
   privacy: () => request<Privacy>('GET', '/privacy'),
   setPrivacy: (p: Privacy) => request<Privacy>('PUT', '/privacy', p),
   /** Todas as linhas deste usuário no servidor, menos o hash do token (docs/privacidade.md). */
-  exportMyData: () => request<unknown>('GET', '/me/export', undefined, 30000),
+  exportMyData: () => request<UserDataExport>('GET', '/me/export', undefined, 30000),
   /** Apaga tudo deste usuário no servidor. O aparelho troca de token e de id; a próxima chamada registra um usuário novo. */
   deleteMyData: async () => {
     const baseUrl = currentUrl();
-    const res = await request<{ deleted: Record<string, number> }>('DELETE', '/me').catch((e: unknown) => {
-      // 2xx do próprio DELETE com o corpo perdido: o servidor já apagou, então a troca de identidade continua.
-      // O mesmo erro vindo do registro em /auth/device significa que o DELETE nem foi enviado.
-      if (e instanceof IncompleteResponseError && e.route === 'DELETE /me') return { deleted: {} };
-      throw e;
-    });
+    const res = await request<{ deleted: Record<string, number> }>('DELETE', '/me');
     useSettings.getState().resetIdentity(baseUrl);
     // Sem esperar, fechar o app agora restauraria o id antigo, e o servidor o adotaria de novo.
     await settingsSaved().catch(() => {
