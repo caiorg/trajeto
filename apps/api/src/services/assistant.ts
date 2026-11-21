@@ -137,12 +137,19 @@ export async function assistant(userId: string, text: string, origin: LatLon, ti
 
 const metersBetween = (a: LatLon, b: LatLon) => haversine([a.lon, a.lat], [b.lon, b.lat]);
 
+/** Chamada ao roteador em andamento por rotina (usuário, origem, destino). Sai do mapa ao terminar, com ou sem erro. */
+const routing = new Map<string, Promise<PlanResponse>>();
+
 /**
  * Plano da rotina origem → destino. Reaproveita as rotas guardadas e só reavalia o ETA;
  * o roteador só é chamado se elas passaram da idade máxima ou se a origem ou o destino
  * se afastaram do raio dos pontos usados quando foram guardadas.
+ * Pedidos simultâneos da mesma rotina esperam a chamada em andamento e usam a rota que ela guardou;
+ * se ela falhar, recebem o mesmo erro em vez de chamar o roteador de novo.
  */
 async function routinePlan(userId: string, originId: string, destId: string, req: Parameters<typeof plan>[1]): Promise<PlanResponse> {
+  const key = JSON.stringify([userId, originId, destId]);
+  for (let running = routing.get(key); running; running = routing.get(key)) await running;
   const { routeMaxAgeMs, routeRadiusM } = config.suggestions;
   const now = Date.now();
   const saved = getRoutineRoutes(userId, originId, destId);
@@ -156,9 +163,14 @@ async function routinePlan(userId: string, originId: string, destId: string, req
     const routes = saved.routes.map((r) => ({ ...r, id: randomUUID() }));
     return evaluatePlan(userId, req, routes, await currentWeather(req.origin.lat, req.origin.lon));
   }
-  const result = await plan(userId, req);
-  saveRoutineRoutes(userId, originId, destId, { from: req.origin, to: req.destination, fetchedAt: now, routes: result.routes.map((r) => r.route) });
-  return result;
+  const running = plan(userId, req)
+    .then((result) => {
+      saveRoutineRoutes(userId, originId, destId, { from: req.origin, to: req.destination, fetchedAt: now, routes: result.routes.map((r) => r.route) });
+      return result;
+    })
+    .finally(() => routing.delete(key));
+  routing.set(key, running);
+  return running;
 }
 
 export async function suggestions(userId: string, here: LatLon, timeZone: string): Promise<Suggestion[]> {

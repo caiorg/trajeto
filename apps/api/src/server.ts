@@ -12,7 +12,9 @@ const RETENTION_SWEEP_MS = 3_600_000;
 function sweepTraces() {
   try {
     const r = purgeExpiredTraces(config.gpsRetentionHours * 3_600_000);
-    if (r.samples || r.plans || r.alerts) app.log.info(`Retenção: ${r.samples} pontos GPS, ${r.plans} planos e ${r.alerts} alertas apagados`);
+    if (r.samples || r.plans || r.alerts || r.routineRoutes) {
+      app.log.info(`Retenção: ${r.samples} pontos GPS, ${r.plans} planos, ${r.alerts} alertas e ${r.routineRoutes} rotas de rotina apagados`);
+    }
   } catch (e) {
     app.log.error(e, 'Falha na rotina de retenção dos rastros GPS');
   }
