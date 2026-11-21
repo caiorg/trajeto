@@ -1,5 +1,5 @@
 import type { PlanRequest, PlanResponse } from './api';
-import { cumulativeDistances, haversine, projectOnPolyline, type Coord } from './geo';
+import { cumulativeDistances, haversine, projectOnPolyline, type Coord, type Projection } from './geo';
 import { spokenInstruction } from './instructions';
 import type { LatLon, Maneuver, Route, RouteOptions } from './types';
 
@@ -145,7 +145,52 @@ export function createNavigator(route: Route, opts: NavigatorOptions = {}) {
     };
   }
 
-  return { update, totalM: total };
+  /** Projeta um ponto na rota a partir de `fromM` (ex.: uma parada), sem mexer no estado da navegação. */
+  const project = (p: LatLon, fromM = 0): Projection => {
+    const pt: Coord = [p.lon, p.lat];
+    if (fromM <= 0) return projectOnPolyline(coords, cum, pt);
+    const i = cum.findIndex((d) => d > fromM) - 1;
+    if (i < 0) return { index: coords.length - 1, point: coords[coords.length - 1]!, offsetM: Infinity, alongM: total };
+    // Trecho que contém `fromM`: vale só a parte depois dele (a distância no trecho é convexa).
+    let first = projectOnPolyline(coords, cum, pt, i, i + 1);
+    if (first.alongM < fromM) {
+      const [a, b] = [coords[i]!, coords[i + 1]!];
+      const f = (fromM - cum[i]!) / (cum[i + 1]! - cum[i]!);
+      const point: Coord = [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f];
+      first = { index: i, point, offsetM: haversine(pt, point), alongM: fromM };
+    }
+    const rest = projectOnPolyline(coords, cum, pt, i + 1);
+    return rest.offsetM < first.offsetM ? rest : first;
+  };
+
+  /**
+   * Último ponto da rota, a partir de `fromM`, a até `distM` de `p`, ou null se não houver. Com
+   * retorno ou volta pela mesma via, é a saída da última passagem perto de `p`.
+   */
+  const lastWithin = (p: LatLon, distM: number, fromM = 0): number | null => {
+    const pt: Coord = [p.lon, p.lat];
+    for (let j = coords.length - 2; j >= 0 && cum[j + 1]! >= fromM; j--) {
+      const len = cum[j + 1]! - cum[j]!;
+      const da = haversine(coords[j]!, pt);
+      if (len === 0) {
+        if (da <= distM && cum[j]! >= fromM) return cum[j]!;
+        continue;
+      }
+      // Pé da perpendicular na reta do trecho (sem limitar ao trecho) e distância até ela.
+      const db = haversine(coords[j + 1]!, pt);
+      const u = (da ** 2 - db ** 2 + len ** 2) / (2 * len);
+      const h2 = distM ** 2 - (da ** 2 - u ** 2);
+      if (h2 < 0) continue;
+      const h = Math.sqrt(h2);
+      // O círculo de raio `distM` corta a reta em [u - h, u + h]; vale a parte dentro do trecho.
+      if (u - h > len || u + h < 0) continue;
+      const leave = cum[j]! + Math.min(len, u + h);
+      if (leave >= fromM) return leave;
+    }
+    return null;
+  };
+
+  return { update, project, lastWithin, totalM: total };
 }
 
 export type Navigator = ReturnType<typeof createNavigator>;
@@ -173,20 +218,43 @@ export function rerouteRequest(
 }
 
 export const STOP_VISITED_RADIUS_M = 50;
+/** Distância máxima entre a parada e a rota para o avanço contar como passagem por ela. */
+export const STOP_ON_ROUTE_M = 150;
+
+export interface RouteProgress extends Pick<Navigator, 'project' | 'lastWithin'> {
+  /** Avanço na rota em navegação (`NavState.alongM`), medido no mesmo `Navigator`. */
+  alongM: number;
+}
 
 /**
- * Marca como visitadas as paradas a menos de `radiusM` da posição. A rota passa pelas paradas na
+ * Marca como visitadas as paradas a menos de `radiusM` da posição. Com `progress`, também conta
+ * como visitada a parada que a rota já deixou para trás (avanço além dela), o que cobre a última
+ * parada pulada. Se a rota volta à parada, conta a última passagem. A rota passa pelas paradas na
  * ordem do array, então as anteriores à última visitada também contam como visitadas (puladas).
  * Devolve o mesmo array se nada mudou.
  */
 export function markVisitedStops(
   stops: TripStop[],
   fix: Pick<NavFix, 'lat' | 'lon'>,
+  progress?: RouteProgress,
   radiusM = STOP_VISITED_RADIUS_M,
 ): TripStop[] {
   let last = -1;
+  // Cada parada pendente é procurada na rota depois da anterior, na ordem do array.
+  let fromM = 0;
   stops.forEach((s, i) => {
-    if (s.visited || haversine([s.lon, s.lat], [fix.lon, fix.lat]) <= radiusM) last = i;
+    if (s.visited) {
+      last = i;
+      return;
+    }
+    if (haversine([s.lon, s.lat], [fix.lon, fix.lat]) <= radiusM) last = i;
+    if (!progress) return;
+    const p = progress.project(s, fromM);
+    if (p.offsetM > STOP_ON_ROUTE_M) return;
+    fromM = p.alongM;
+    // Conta a saída da última passagem perto da parada: com retorno, a rota ainda volta a ela.
+    const leaveM = progress.lastWithin(s, p.offsetM + radiusM, p.alongM);
+    if (leaveM !== null && progress.alongM > leaveM) last = i;
   });
   if (stops.every((s, i) => s.visited || i > last)) return stops;
   return stops.map((s, i) => (s.visited || i > last ? s : { ...s, visited: true }));

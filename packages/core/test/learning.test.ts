@@ -406,6 +406,91 @@ describe('navegação', () => {
     stops = markVisitedStops(stops, offRoute);
     expect(rerouteRequest(plan, offRoute, stops, opts).waypoints).toEqual([]);
   });
+
+  it('recálculo não volta para a última parada pulada', () => {
+    const r = makeRoute('r', HOME, WORK);
+    const plan = { destination: { lat: WORK[1], lon: WORK[0] }, destinationName: 'Trabalho' };
+    const opts = { avoidTolls: false, avoidHighways: false, avoidFerries: false };
+    const ll = ([lon, lat]: Coord) => ({ lat, lon });
+    const a = ll(r.geometry[20]!);
+    const b = ll(r.geometry[60]!);
+    let stops: TripStop[] = [a, b].map((p) => ({ ...p, visited: false }));
+    const nav = createNavigator(r);
+
+    // Segue a rota, passa por A e nunca chega a menos de 100 m de B.
+    let t = 0;
+    for (const p of r.geometry.slice(0, 77)) {
+      if (haversine(p, [b.lon, b.lat]) < 100) continue;
+      const fix = { t: (t += 5000), lat: p[1], lon: p[0], accuracy: 5 };
+      stops = markVisitedStops(stops, fix, { alongM: nav.update(fix).alongM, project: nav.project, lastWithin: nav.lastWithin });
+      if (t === 5000 * 30) expect(stops.map((s) => s.visited)).toEqual([true, false]);
+    }
+
+    // Sai da rota perto do destino: o recálculo vai direto para ele.
+    const offRoute = { t: (t += 5000), lat: WORK[1] + 0.002, lon: WORK[0] + 0.002, accuracy: 5 };
+    stops = markVisitedStops(stops, offRoute, { alongM: nav.update(offRoute).alongM, project: nav.project, lastWithin: nav.lastWithin });
+    expect(rerouteRequest(plan, offRoute, stops, opts).waypoints).toEqual([]);
+  });
+
+  it('avanço não marca parada cuja posição a rota cruza antes da passagem dela', () => {
+    // Vai 2 km para leste até A, volta 1 km até B (cruzada na ida) e segue 1 km para o norte.
+    const [x0, y0] = HOME;
+    const east = 0.009813;
+    const north = 0.008993;
+    const geometry: Coord[] = [];
+    for (let i = 0; i <= 40; i++) geometry.push([x0 + (east * 2 * i) / 40, y0]);
+    for (let i = 1; i <= 20; i++) geometry.push([x0 + east * (2 - i / 20), y0]);
+    for (let i = 1; i <= 20; i++) geometry.push([x0 + east, y0 + (north * i) / 20]);
+    const nav = createNavigator({ ...makeRoute('r', HOME, WORK), geometry });
+    const a = { lat: y0, lon: x0 + 2 * east };
+    const b = { lat: y0, lon: x0 + east };
+    let stops: TripStop[] = [a, b].map((p) => ({ ...p, visited: false }));
+
+    // Na ida, uma falha de GPS pula de 200 m antes de B para 150 m depois dele.
+    for (const [i, km] of [0, 0.2, 0.4, 0.6, 0.8, 1.15].entries()) {
+      const fix = { t: i * 5000, lat: y0, lon: x0 + east * km, accuracy: 5 };
+      stops = markVisitedStops(stops, fix, { alongM: nav.update(fix).alongM, project: nav.project, lastWithin: nav.lastWithin });
+    }
+    expect(stops.map((s) => s.visited)).toEqual([false, false]);
+  });
+
+  it('avanço marca duas paradas puladas no mesmo trecho longo', () => {
+    // Um único trecho de 2 km para leste, com A a 0,5 km e B a 1,5 km.
+    const [x0, y0] = HOME;
+    const east = 0.009813;
+    const geometry: Coord[] = [HOME, [x0 + 2 * east, y0]];
+    const nav = createNavigator({ ...makeRoute('r', HOME, WORK), geometry });
+    let stops: TripStop[] = [0.5, 1.5].map((km) => ({ lat: y0, lon: x0 + east * km, visited: false }));
+
+    const fix = { t: 0, lat: y0, lon: x0 + east * 1.8, accuracy: 5 };
+    stops = markVisitedStops(stops, fix, { alongM: nav.update(fix).alongM, project: nav.project, lastWithin: nav.lastWithin });
+    expect(stops.map((s) => s.visited)).toEqual([true, true]);
+  });
+
+  it('avanço não marca parada antes de um retorno curto que volta a ela', () => {
+    // Passa pela parada (200 m), faz retorno em U a 340 m, volta a ela (480 m) e termina a 490 m.
+    const [x0, y0] = HOME;
+    const m = 0.009813 / 1000;
+    const geometry: Coord[] = [HOME, [x0 + 340 * m, y0], [x0 + 190 * m, y0]];
+    const nav = createNavigator({ ...makeRoute('r', HOME, WORK), geometry });
+    let stops: TripStop[] = [{ lat: y0, lon: x0 + 200 * m, visited: false }];
+
+    // Falha de GPS: o fix seguinte já está 120 m depois da parada, antes do retorno.
+    const fix = { t: 0, lat: y0, lon: x0 + 320 * m, accuracy: 5 };
+    stops = markVisitedStops(stops, fix, { alongM: nav.update(fix).alongM, project: nav.project, lastWithin: nav.lastWithin });
+    expect(stops[0]!.visited).toBe(false);
+  });
+  it('avanço marca parada logo antes de um vértice da rota', () => {
+    // No equador, a parada fica a 111 m e o vértice seguinte 40 m depois dela.
+    const geometry: Coord[] = [[-0.001, 0], [0.00036, 0], [0.001, 0]];
+    const nav = createNavigator({ ...makeRoute('r', HOME, WORK), geometry });
+    let stops: TripStop[] = [{ lat: 0, lon: 0, visited: false }];
+
+    // ~60 m depois da parada: já passou do raio de 50 m.
+    const fix = { t: 0, lat: 0, lon: 0.00054, accuracy: 5 };
+    stops = markVisitedStops(stops, fix, { alongM: nav.update(fix).alongM, project: nav.project, lastWithin: nav.lastWithin });
+    expect(stops[0]!.visited).toBe(true);
+  });
 });
 
 function mulberry(seed: number) {
