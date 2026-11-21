@@ -211,6 +211,23 @@ describe('apagar os dados', () => {
     expect(useSettings.getState().credentials[url]).toBeUndefined();
   });
 
+  it('corpo perdido no registro do aparelho não conta como dados apagados', async () => {
+    const server = fakeServer();
+    const fetch = vi.fn(async (url: string, init: RequestInit) => {
+      const res = await server.fetch(url, init);
+      return new URL(url).pathname === '/auth/device' ? new Response('{"userId":', { status: res.status }) : res;
+    });
+    vi.stubGlobal('fetch', fetch);
+    const { api } = await import('../src/lib/api');
+    const { settingsHydration, useSettings } = await import('../src/lib/store');
+    await settingsHydration;
+    const oldId = useSettings.getState().userId;
+
+    await expect(api.deleteMyData()).rejects.toThrow('Resposta incompleta do servidor. Tente de novo.');
+    expect(useSettings.getState().userId).toBe(oldId);
+    expect(server.calls.filter((c) => c.route === 'DELETE /me')).toEqual([]);
+  });
+
   it('escrita que leva 401 depois do reset não é reenviada com a identidade nova', async () => {
     const server = fakeServer();
     vi.stubGlobal('fetch', server.fetch);

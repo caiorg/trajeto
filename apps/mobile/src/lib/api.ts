@@ -31,8 +31,16 @@ export class ApiError extends Error {
   }
 }
 
-/** Resposta 2xx cujo corpo não chegou inteiro ou não é JSON: o servidor processou o pedido. */
-export class IncompleteResponseError extends ApiError {}
+/** Resposta 2xx cujo corpo não chegou inteiro ou não é JSON: o servidor processou o pedido `route` (`MÉTODO /caminho`). */
+export class IncompleteResponseError extends ApiError {
+  constructor(
+    status: number,
+    message: string,
+    public route: string,
+  ) {
+    super(status, message);
+  }
+}
 
 /** O servidor já apagou os dados, mas o aparelho não salvou a identidade nova. Não repetir o `DELETE /me`. */
 export class LocalSaveError extends Error {}
@@ -66,7 +74,7 @@ async function send<T>(baseUrl: string, method: Method, path: string, body: unkn
   }
   if (!res.ok) throw new ApiError(res.status, data?.error ?? `Erro ${res.status}`);
   // Leitura interrompida ou corpo que não é JSON não vira resposta vazia.
-  if (data === undefined) throw new IncompleteResponseError(res.status, 'Resposta incompleta do servidor. Tente de novo.');
+  if (data === undefined) throw new IncompleteResponseError(res.status, 'Resposta incompleta do servidor. Tente de novo.', `${method} ${path}`);
   return data as T;
 }
 
@@ -199,8 +207,9 @@ export const api = {
   deleteMyData: async () => {
     const baseUrl = currentUrl();
     const res = await request<{ deleted: Record<string, number> }>('DELETE', '/me').catch((e: unknown) => {
-      // Status 2xx com o corpo perdido: o servidor já apagou, então a troca de identidade continua.
-      if (e instanceof IncompleteResponseError) return { deleted: {} };
+      // 2xx do próprio DELETE com o corpo perdido: o servidor já apagou, então a troca de identidade continua.
+      // O mesmo erro vindo do registro em /auth/device significa que o DELETE nem foi enviado.
+      if (e instanceof IncompleteResponseError && e.route === 'DELETE /me') return { deleted: {} };
       throw e;
     });
     useSettings.getState().resetIdentity(baseUrl);
